@@ -51,6 +51,7 @@
     "generate:news-feed": "yarn workspace @actual-app/ci-actions tsx bin/generate-news-feed.ts",
     "test": "lage test --continue",
     "test:debug": "lage test --no-cache --continue",
+    "test:actual-node-mcp": "vitest run --config scripts/actual-node-client/vitest.config.mjs",
     "e2e": "yarn workspace @actual-app/web run e2e",
     "e2e:desktop": "yarn build:desktop --skip-exe-build --skip-translations && yarn workspace desktop-electron e2e",
     "playwright": "yarn workspace @actual-app/web run playwright",
@@ -69,6 +70,8 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@actual-app/api": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@monorepo-utils/workspaces-to-typescript-project-references": "^2.11.0",
     "@octokit/rest": "^22.0.1",
     "@types/node": "^22.20.1",
@@ -90,7 +93,8 @@
     "p-limit": "^7.3.0",
     "prompts": "^2.4.2",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "zod": "^4.6.5"
   },
   "dependenciesMeta": {
     "argon2": {

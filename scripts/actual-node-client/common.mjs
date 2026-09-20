@@ -13,6 +13,12 @@ export const DEFAULT_DATA_DIR = join(
   'share',
   'actual-node-client',
 );
+export const MCP_DEFAULT_DATA_DIR = join(
+  homedir(),
+  '.local',
+  'share',
+  'actual-node-mcp',
+);
 export const KEYRING_SERVICE = 'actual-node-client';
 export const SERVER_PASSWORD_KIND = 'server-password';
 export const ENCRYPTION_PASSWORD_KIND = 'encryption-password';
