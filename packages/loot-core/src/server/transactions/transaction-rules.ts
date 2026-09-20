@@ -48,6 +48,8 @@ import type {
   TransactionEntity,
 } from '#types/models';
 
+import { categorizeTransaction } from './categorization-plugins';
+
 import { batchUpdateTransactions } from '.';
 
 // TODO: Detect if it looks like the user is creating a rename rule
@@ -56,6 +58,23 @@ import { batchUpdateTransactions } from '.';
 //   provides different "templates" like "create renaming rule"
 
 export { iterateIds } from '#server/rules';
+export {
+  categorizeTransaction,
+  clearCategorizationPlugins,
+  getCategorizationPlugins,
+  getCategorizedTransactions,
+  registerCategorizationPlugin,
+  runCategorizationPlugins,
+  setCategorizationPluginEnabled,
+  unregisterCategorizationPlugin,
+} from './categorization-plugins';
+export type {
+  CategorizationCandidate,
+  CategorizationOptions,
+  CategorizationPlugin,
+  CategorizationTransaction,
+  CategorizationPluginResult,
+} from './categorization-plugins';
 
 let allRules;
 let unlistenSync;
@@ -344,6 +363,29 @@ export async function runRules(
     includeBalance: false,
   });
   let lastCategoryIdForGroup: string | null = finalTrans.category ?? null;
+  let categorizedByRule = false;
+
+  async function applyRule(rule: Rule, force = false) {
+    if (!force && !rule.evalConditions(finalTrans)) {
+      return;
+    }
+
+    await ensureBalanceFor(rule);
+    const changes = rule.execActions(finalTrans);
+    if (
+      changes.category != null ||
+      (rule.actions.some(
+        action =>
+          action.op === 'set' &&
+          action.field === 'category' &&
+          action.value != null,
+      ) &&
+        finalTrans.category != null)
+    ) {
+      categorizedByRule = true;
+    }
+    finalTrans = Object.assign({}, finalTrans, changes);
+  }
 
   // The running balance is a query over every earlier transaction in
   // the account, so fetch it at most once, and only for a rule that is
@@ -386,9 +428,7 @@ export async function runRules(
     if (scheduleRuleID !== '') {
       if (rules[i].id === scheduleRuleID) {
         // bypass condition checking to run the rule even if the transaction date falls outside of the schedule's date range.
-        await ensureBalanceFor(rules[i]);
-        const changes = rules[i].execActions(finalTrans);
-        finalTrans = Object.assign({}, finalTrans, changes);
+        await applyRule(rules[i], true);
         await resolvePayeeNameForRules(finalTrans);
         lastCategoryIdForGroup = await refreshCategoryGroupIfChanged(
           finalTrans,
@@ -399,14 +439,7 @@ export async function runRules(
         continue;
       } else {
         // if a rule is not linked to a schedule, run it.
-        if (rules[i].evalConditions(finalTrans)) {
-          await ensureBalanceFor(rules[i]);
-          finalTrans = Object.assign(
-            {},
-            finalTrans,
-            rules[i].execActions(finalTrans),
-          );
-        }
+        await applyRule(rules[i]);
         await resolvePayeeNameForRules(finalTrans);
         lastCategoryIdForGroup = await refreshCategoryGroupIfChanged(
           finalTrans,
@@ -415,14 +448,7 @@ export async function runRules(
       }
     } else {
       // if there is no scheduleRuleID then just run all rules.
-      if (rules[i].evalConditions(finalTrans)) {
-        await ensureBalanceFor(rules[i]);
-        finalTrans = Object.assign(
-          {},
-          finalTrans,
-          rules[i].execActions(finalTrans),
-        );
-      }
+      await applyRule(rules[i]);
       await resolvePayeeNameForRules(finalTrans);
       lastCategoryIdForGroup = await refreshCategoryGroupIfChanged(
         finalTrans,
@@ -431,7 +457,10 @@ export async function runRules(
     }
   }
 
-  return await finalizeTransactionForRules(finalTrans);
+  const finalized = await finalizeTransactionForRules(finalTrans);
+  return categorizeTransaction(finalized, {
+    categorizedByRule,
+  });
 }
 
 function conditionSpecialCases(cond: Condition | null): Condition | null {

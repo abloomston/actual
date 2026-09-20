@@ -4,6 +4,7 @@ import type { InitConfig, lib } from '@actual-app/core/server/main';
 import { validateNodeVersion } from './validateNodeVersion';
 
 export * from './methods';
+export * from './categorization';
 export * as utils from './utils';
 
 /** @deprecated Please use return value of `init` instead */
