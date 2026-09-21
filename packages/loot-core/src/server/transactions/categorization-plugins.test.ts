@@ -15,6 +15,7 @@ import {
   loadRules,
   runRules,
 } from '#server/transactions/transaction-rules';
+
 import type { CategorizationTransaction } from './categorization-plugins';
 
 async function createTestData() {
@@ -124,6 +125,107 @@ describe('categorization plugins', () => {
       category: 'low',
       confidence: 0.2,
       pluginId: 'low',
+    });
+  });
+
+  it('logs plugin results and the winning candidate', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    registerCategorizationPlugin({
+      id: 'low',
+      categorize: () => ({ category: 'low', confidence: 0.2 }),
+    });
+    registerCategorizationPlugin({
+      id: 'high',
+      categorize: () => ({ category: 'high', confidence: 0.9 }),
+    });
+
+    try {
+      await expect(
+        runCategorizationPlugins(makeTransaction(), {
+          categorizedTransactions: [],
+        }),
+      ).resolves.toEqual({
+        category: 'high',
+        confidence: 0.9,
+        pluginId: 'high',
+      });
+
+      expect(log).toHaveBeenCalledWith(
+        '[categorization] plugin-result',
+        expect.objectContaining({
+          transactionId: 'new-transaction',
+          pluginId: 'low',
+          category: 'low',
+          confidence: 0.2,
+        }),
+      );
+      expect(log).toHaveBeenCalledWith(
+        '[categorization] plugin-result',
+        expect.objectContaining({
+          transactionId: 'new-transaction',
+          pluginId: 'high',
+          category: 'high',
+          confidence: 0.9,
+        }),
+      );
+      expect(log).toHaveBeenCalledWith(
+        '[categorization] winner',
+        expect.objectContaining({
+          transactionId: 'new-transaction',
+          pluginId: 'high',
+          category: 'high',
+          confidence: 0.9,
+        }),
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('allows index-backed plugins to skip loading core transaction history', async () => {
+    const { groceries } = await createTestData();
+    await db.insertTransaction({
+      id: 'history',
+      account: 'checking',
+      date: '2024-01-01',
+      amount: -500,
+      category: groceries,
+    });
+
+    let receivedHistory: readonly CategorizationTransaction[] | undefined;
+    registerCategorizationPlugin({
+      id: 'index-backed-plugin',
+      needsCategorizedTransactions: false,
+      categorize: (_transaction, categorizedTransactions) => {
+        receivedHistory = categorizedTransactions;
+        return null;
+      },
+    });
+
+    await runCategorizationPlugins(makeTransaction());
+
+    expect(receivedHistory).toEqual([]);
+  });
+
+  it('preserves optional plugin reasoning in the winning candidate', async () => {
+    registerCategorizationPlugin({
+      id: 'reasoning-plugin',
+      categorize: () => ({
+        category: 'groceries',
+        confidence: 0.8,
+        reasoning: 'The payee matches prior grocery transactions.',
+      }),
+    });
+
+    await expect(
+      runCategorizationPlugins(makeTransaction(), {
+        categorizedTransactions: [],
+      }),
+    ).resolves.toEqual({
+      category: 'groceries',
+      confidence: 0.8,
+      pluginId: 'reasoning-plugin',
+      reasoning: 'The payee matches prior grocery transactions.',
     });
   });
 

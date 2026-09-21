@@ -88,6 +88,7 @@ export const TOOL_DEFINITIONS = [
     (api, args, session) =>
       api.loadBudget(args.id).then(result => {
         session.markBudgetLoaded(args.id);
+        session.configureCategorizationPlugin(args.id);
         return result;
       }),
     { apiMethod: 'loadBudget' },
@@ -123,6 +124,7 @@ export const TOOL_DEFINITIONS = [
         filename: args.filename,
       });
       session.markBudgetLoaded(result.id);
+      session.configureCategorizationPlugin(result.id);
       return result;
     },
     { apiMethod: 'importBudget', destructive: true },
@@ -845,6 +847,7 @@ export class ActualApiSession {
     await this.ensureDir(dataDir);
     const api = await this.getApi();
     await api.init({ dataDir, serverURL, password });
+    api.enableDefaultCategorizationPlugin?.();
     this.initialized = true;
     this.config = { serverURL, dataDir };
 
@@ -876,7 +879,8 @@ export class ActualApiSession {
       syncId,
       encryptionPassword ? { password: encryptionPassword } : undefined,
     );
-    this.markBudgetLoaded(syncId);
+    this.markBudgetLoaded(result?.id || syncId);
+    this.configureCategorizationPlugin(result?.id || syncId);
     return result;
   }
 
@@ -917,6 +921,11 @@ export class ActualApiSession {
 
   markBudgetLoaded(id) {
     this.loadedBudgetId = id;
+  }
+
+  configureCategorizationPlugin(budgetId = this.loadedBudgetId) {
+    if (!budgetId || !this.api) return;
+    this.api.configureDefaultCategorizationPlugin?.(budgetId);
   }
 
   markBudgetClosed() {

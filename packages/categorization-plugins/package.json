@@ -1,0 +1,27 @@
+{
+  "name": "@actual-app/categorization-plugins",
+  "version": "26.9.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsgo -b",
+    "test": "vitest --run",
+    "typecheck": "tsgo -b"
+  },
+  "dependencies": {
+    "@actual-app/core": "workspace:*",
+    "@openrouter/sdk": "1.2.35",
+    "vectra": "0.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@typescript/native-preview": "beta",
+    "vite": "^8.1.5",
+    "vitest": "^5.0.0"
+  }
+}

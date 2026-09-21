@@ -7,6 +7,7 @@ import { batchMessages } from '#server/sync';
 import type { Diff } from '#shared/util';
 import type { PayeeEntity, TransactionEntity } from '#types/models';
 
+import { notifyCategorizationPluginChanges } from './categorization-plugins';
 import * as rules from './transaction-rules';
 import * as transfer from './transfer';
 
@@ -205,6 +206,12 @@ export async function batchUpdateTransactions({
       }
     }
   }
+
+  await notifyCategorizationPluginChanges({
+    added: allAdded,
+    updated: allUpdated,
+    deletedIds,
+  });
 
   return {
     added: resultAdded,

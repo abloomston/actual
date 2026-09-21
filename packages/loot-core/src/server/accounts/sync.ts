@@ -13,6 +13,7 @@ import { post } from '#server/post';
 import { getServer } from '#server/server-config';
 import { batchMessages } from '#server/sync';
 import { batchUpdateTransactions } from '#server/transactions';
+import { notifyCategorizationPluginChanges } from '#server/transactions/categorization-plugins';
 import { runRules } from '#server/transactions/transaction-rules';
 import {
   defaultMappings,
@@ -1059,6 +1060,11 @@ export async function addTransactions(
       newTransactions = await Promise.all(
         added.map(async trans => db.insertTransaction(trans)),
       );
+    });
+    await notifyCategorizationPluginChanges({
+      added,
+      updated: [],
+      deletedIds: [],
     });
   }
   return newTransactions;

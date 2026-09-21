@@ -1,0 +1,46 @@
+export {
+  createEmbeddingLlmJudgePlugin,
+  DEFAULT_NEAREST_TRANSACTIONS_PER_CATEGORY,
+  type EmbeddingLlmJudgePlugin,
+  type EmbeddingLlmJudgePluginOptions,
+} from './embedding-llm-judge';
+export {
+  createEmbeddingPlugin,
+  createVectraEmbeddingVectorStore,
+  DEFAULT_EMBEDDING_INDEX_PATH,
+  DEFAULT_OPENROUTER_EMBEDDING_MODEL,
+  EMBEDDING_VERSION,
+  getTransactionEmbeddingContentHash,
+  serializeTransactionForEmbedding,
+  type CategorizationCategory,
+  type EmbeddingCategorizationPlugin,
+  type EmbeddingCategorizationPluginOptions,
+  type EmbeddingMatch,
+  type EmbeddingMetadata,
+  type EmbeddingVectorStore,
+  type EmbeddingVectorStoreItem,
+  type EmbeddingVectorStoreResult,
+} from './embedding';
+export {
+  buildLlmJudgeMessages,
+  createLlmJudgePlugin,
+  DEFAULT_LLM_JUDGE_MODEL,
+  type LlmJudgeCategoriesSource,
+  type LlmJudgePlugin,
+  type LlmJudgePluginOptions,
+  type LlmJudgeReference,
+  type LlmJudgeResult,
+} from './llm-judge';
+export {
+  createOpenRouterPlugin,
+  OPENROUTER_ZDR_PROVIDER_PREFERENCES,
+  type OpenRouterChatRequest,
+  type OpenRouterChatResponse,
+  type OpenRouterChatTransport,
+  type OpenRouterEmbeddingRequest,
+  type OpenRouterEmbeddingResponse,
+  type OpenRouterEmbeddingTransport,
+  type OpenRouterPlugin,
+  type OpenRouterZdrProviderPreferences,
+  type OpenRouterPluginOptions,
+} from './openrouter';

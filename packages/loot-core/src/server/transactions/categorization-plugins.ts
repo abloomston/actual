@@ -17,6 +17,7 @@ export type CategorizationPluginResult =
   | {
       category: string | null;
       confidence: number;
+      reasoning?: string;
     }
   | null
   | undefined;
@@ -26,16 +27,25 @@ export type CategorizationPlugin = {
   id: string;
   /** Disabled plugins remain registered but are not called. */
   enabled?: boolean;
+  /** Set false when the plugin uses its own history/index lookup. */
+  needsCategorizedTransactions?: boolean;
   categorize: (
     transaction: CategorizationTransaction,
     categorizedTransactions: readonly CategorizationTransaction[],
   ) => CategorizationPluginResult | Promise<CategorizationPluginResult>;
+  /** Called after a transaction has been committed to the budget. */
+  onTransactionCommitted?: (
+    transaction: CategorizationTransaction,
+  ) => void | Promise<void>;
+  /** Called after a transaction has been deleted from the budget. */
+  onTransactionDeleted?: (transactionId: string) => void | Promise<void>;
 };
 
 export type CategorizationCandidate = {
   category: string;
   confidence: number;
   pluginId: string;
+  reasoning?: string;
 };
 
 type RegisteredCategorizationPlugin = CategorizationPlugin & {
@@ -170,7 +180,8 @@ function normalizeCandidate(
   if (
     typeof result.category !== 'string' ||
     result.category.trim() === '' ||
-    !isValidConfidence(result.confidence)
+    !isValidConfidence(result.confidence) ||
+    (result.reasoning !== undefined && typeof result.reasoning !== 'string')
   ) {
     logger.warn(
       `Categorization plugin "${plugin.id}" returned an invalid result`,
@@ -178,11 +189,15 @@ function normalizeCandidate(
     return null;
   }
 
-  return {
+  const candidate: CategorizationCandidate = {
     category: result.category,
     confidence: result.confidence,
     pluginId: plugin.id,
   };
+  if (result.reasoning !== undefined) {
+    candidate.reasoning = result.reasoning;
+  }
+  return candidate;
 }
 
 /**
@@ -193,6 +208,40 @@ function normalizeCandidate(
  * from being imported. Ties are resolved in registration order, which makes
  * the result deterministic without giving any plugin an implicit priority.
  */
+export async function notifyCategorizationPluginChanges({
+  added,
+  updated,
+  deletedIds,
+}: {
+  added: readonly CategorizationTransaction[];
+  updated: readonly CategorizationTransaction[];
+  deletedIds: readonly string[];
+}): Promise<void> {
+  const registeredPlugins = [...plugins.values()].filter(
+    plugin => plugin.enabled,
+  );
+
+  for (const plugin of registeredPlugins) {
+    try {
+      if (plugin.onTransactionCommitted) {
+        for (const transaction of [...added, ...updated]) {
+          await plugin.onTransactionCommitted(transaction);
+        }
+      }
+      if (plugin.onTransactionDeleted) {
+        for (const transactionId of deletedIds) {
+          await plugin.onTransactionDeleted(transactionId);
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        `Categorization plugin "${plugin.id}" failed to update its index`,
+        error,
+      );
+    }
+  }
+}
+
 export async function runCategorizationPlugins(
   transaction: CategorizationTransaction,
   {
@@ -209,9 +258,12 @@ export async function runCategorizationPlugins(
     return null;
   }
 
+  const needsHistory = enabledPlugins.some(
+    plugin => plugin.needsCategorizedTransactions !== false,
+  );
   const history =
     categorizedTransactions ??
-    (await getCategorizedTransactions(transaction.id));
+    (needsHistory ? await getCategorizedTransactions(transaction.id) : []);
 
   let bestCandidate: CategorizationCandidate | null = null;
 
@@ -225,6 +277,12 @@ export async function runCategorizationPlugins(
     }
 
     const candidate = normalizeCandidate(plugin, result);
+    logger.info('[categorization] plugin-result', {
+      transactionId: transaction.id,
+      pluginId: plugin.id,
+      category: candidate?.category ?? null,
+      confidence: candidate?.confidence ?? null,
+    });
     if (
       candidate &&
       (bestCandidate == null || candidate.confidence > bestCandidate.confidence)
@@ -232,6 +290,13 @@ export async function runCategorizationPlugins(
       bestCandidate = candidate;
     }
   }
+
+  logger.info('[categorization] winner', {
+    transactionId: transaction.id,
+    pluginId: bestCandidate?.pluginId ?? null,
+    category: bestCandidate?.category ?? null,
+    confidence: bestCandidate?.confidence ?? null,
+  });
 
   return bestCandidate;
 }

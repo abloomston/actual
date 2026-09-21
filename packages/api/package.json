@@ -55,6 +55,7 @@
     "typecheck": "tsgo -b && tsc-strict"
   },
   "dependencies": {
+    "@actual-app/categorization-plugins": "workspace:*",
     "@actual-app/core": "workspace:*",
     "@actual-app/crdt": "workspace:*",
     "better-sqlite3": "^12.11.1",
