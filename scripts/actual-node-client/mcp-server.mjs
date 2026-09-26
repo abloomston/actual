@@ -33,7 +33,7 @@ export function createActualMcpServer({
     },
     {
       instructions:
-        'This server exposes the @actual-app/api Node client. Call actual_init or any API tool; authentication is read from GNOME Keyring and never supplied as a tool argument. Mutating tools operate on the currently loaded budget and should be used deliberately.',
+        'This server exposes the @actual-app/api Node client. Call actual_init or any API tool; authentication uses ACTUAL_PASSWORD when set, otherwise GNOME Keyring, and is never supplied as a tool argument. Mutating tools operate on the currently loaded budget and should be used deliberately.',
     },
   );
 

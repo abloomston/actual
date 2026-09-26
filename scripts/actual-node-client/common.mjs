@@ -120,6 +120,10 @@ export async function storeKeyringSecret({ serverURL, kind, label }) {
 }
 
 export async function readKeyringSecret({ serverURL, kind }) {
+  if (kind === SERVER_PASSWORD_KIND && process.env.ACTUAL_PASSWORD) {
+    return process.env.ACTUAL_PASSWORD;
+  }
+
   await ensureSecretTool();
 
   try {

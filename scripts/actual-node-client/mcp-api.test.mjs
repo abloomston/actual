@@ -194,6 +194,32 @@ describe('ActualApiSession', () => {
     expect(api.shutdown).toHaveBeenCalledTimes(1);
   });
 
+  it('uses ACTUAL_PASSWORD before querying the keyring', async () => {
+    const api = makeApi();
+    const serverCredential = ['server', 'credential', 'environment'].join('-');
+    vi.stubEnv('ACTUAL_PASSWORD', serverCredential);
+    const session = new ActualApiSession({
+      api,
+      ensureDir: vi.fn(async () => undefined),
+      serverURL: 'http://localhost:5006',
+      dataDir: '/tmp/actual-mcp-test',
+    });
+
+    try {
+      await expect(session.executeTool('actual_get_budgets')).resolves.toEqual([
+        { name: 'Budget' },
+      ]);
+      expect(api.init).toHaveBeenCalledWith({
+        dataDir: '/tmp/actual-mcp-test',
+        serverURL: 'http://localhost:5006',
+        password: serverCredential,
+      });
+    } finally {
+      await session.shutdown();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('downloads with the optional encryption secret and runs callback operations', async () => {
     const api = makeApi();
     const serverCredential = ['server', 'credential', 'test'].join('-');

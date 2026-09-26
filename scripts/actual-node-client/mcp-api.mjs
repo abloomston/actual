@@ -69,7 +69,7 @@ const budgetOperationSchema = z.object({
 export const TOOL_DEFINITIONS = [
   tool(
     'actual_init',
-    'Initialize the Actual Node API client using the server password stored in the keyring. Never pass a password or session token to this tool.',
+    'Initialize the Actual Node API client using ACTUAL_PASSWORD when set, or the server password stored in GNOME Keyring otherwise. Never pass a password or session token to this tool.',
     initSchema,
     (_api, args, session) => session.initialize(args),
     { requiresInit: false },
