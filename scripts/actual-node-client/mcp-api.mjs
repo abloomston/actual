@@ -55,6 +55,19 @@ const querySchema = z.object({
   query: jsonObject,
 });
 
+const AQL_QUERY_DESCRIPTION = `Run a read-only ActualQL query (not SQL). The query argument is a serialized Query state, not a query string. Start with actual_q({table:"transactions"}), preserve its defaults, edit the expression arrays, and pass the whole state as {"query": state}.
+
+State keys include table, tableOptions, filterExpressions, selectExpressions, groupExpressions, orderExpressions, calculation, rawMode, withDead, validateRefs, limit, and offset. Keep the defaults returned by actual_q; filters, selections, grouping, and ordering are arrays. Example: count uncategorized transactions by account:
+{"table":"transactions","tableOptions":{},"filterExpressions":[{"category":null}],"selectExpressions":["account.name",{"count":{"$count":"*"}}],"groupExpressions":["account.name"],"orderExpressions":["account.name"],"calculation":false,"rawMode":false,"withDead":false,"validateRefs":true,"limit":null,"offset":null}
+
+Valid schema tables (field names are case-sensitive): transactions, accounts, account_groups, categories, category_groups, cleanup_groups, payees, schedules, rules, notes, preferences, transaction_filters, custom_reports, reflect_budgets, zero_budgets, dashboard_pages, dashboard, and payee_locations. Dot paths traverse reference fields, e.g. account.name or category.group.name; arbitrary SQL and unknown fields are not supported. Common fields: transactions (id, date, amount, account, category, payee, notes, cleared, reconciled, transfer_id, is_parent, is_child, parent_id); accounts (name, offbudget, closed); categories (name, is_income, hidden, group); payees (name, transfer_acct); schedules (name, next_date, completed).
+
+Filters: a plain value means equality (null matches an unset reference); multiple fields/filters are ANDed. Use $and or $or with arrays for explicit logic; an array of conditions on one field means AND. Operators: $eq, $ne, $lt, $lte, $gt, $gte, $oneof, $like, $notlike, $regexp. Date literals use YYYY-MM-DD. Use a condition such as {"date":{"$transform":"$month","$eq":"2026-06"}} for month filtering; date.month is not a field.
+
+Selections are field strings or *; rename a field with {"accountName":"account.name"} or compute an alias with {"total":{"$sum":"$amount"}}. Expression field references start with $. Aggregate functions are $sum and $count; combine them with groupExpressions (field paths or expressions) for grouped output. For a scalar, set calculation:true and selectExpressions:[{"result":{"$count":"*"}}]. Other built-ins include $sumOver, $substr, $lower, $neg, $abs, $idiv, $id, $day, $month, $year, $condition, $nocase, and $literal. Amounts are integer minor units. Order strings are ascending by default; use {"date":"desc"} for direction. limit and offset paginate.
+
+Transactions default to tableOptions.splits="inline" (split children, not their parent rows). "grouped" nests subtransactions under parents; aggregates in grouped mode use non-parent rows to avoid double-counting. "all" returns both parents and children and can double-count; "none" returns parents without children. Deleted rows are excluded unless withDead is true. Results contain data and dependencies; data is normally an array, but calculation queries return a scalar.`;
+
 const budgetOperationSchema = z.object({
   operations: operationsSchema,
 });
@@ -336,21 +349,21 @@ export const TOOL_DEFINITIONS = [
   ),
   tool(
     'actual_run_query',
-    'Run an AQL query using a serialized Query state object.',
+    'Deprecated legacy alias for actual_aql_query. Accepts the same serialized Query state and returns the same result; prefer actual_aql_query. See that tool description for AQL syntax, schema tables, and an example.',
     querySchema,
     (api, args) => api.runQuery({ serialize: () => args.query }),
     { apiMethod: 'runQuery', readOnly: true },
   ),
   tool(
     'actual_aql_query',
-    'Run an AQL query using a serialized Query state object.',
+    AQL_QUERY_DESCRIPTION,
     querySchema,
     (api, args) => api.aqlQuery({ serialize: () => args.query }),
     { apiMethod: 'aqlQuery', readOnly: true },
   ),
   tool(
     'actual_q',
-    'Create the serialized starting state for an Actual AQL query. Pass the returned state to actual_aql_query or actual_run_query after adding expressions.',
+    'Create the default serialized AQL Query state for a schema table. Preserve the returned defaults, add filterExpressions/selectExpressions/groupExpressions/orderExpressions as needed, then pass the whole state to actual_aql_query. Its description includes the table list, syntax, and example.',
     z.object({ table: z.string().min(1) }),
     (api, args) => api.q(args.table).serialize(),
     { apiMethod: 'q', readOnly: true },

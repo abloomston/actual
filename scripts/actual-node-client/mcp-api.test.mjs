@@ -91,6 +91,49 @@ describe('Actual MCP tool catalog', () => {
     );
   });
 
+  it('documents AQL query state, syntax, and the complete schema table list', () => {
+    const query = TOOL_DEFINITIONS.find(
+      tool => tool.name === 'actual_aql_query',
+    );
+    const description = query.description;
+
+    for (const table of [
+      'transactions',
+      'accounts',
+      'account_groups',
+      'categories',
+      'category_groups',
+      'cleanup_groups',
+      'payees',
+      'schedules',
+      'rules',
+      'notes',
+      'preferences',
+      'transaction_filters',
+      'custom_reports',
+      'reflect_budgets',
+      'zero_budgets',
+      'dashboard_pages',
+      'dashboard',
+      'payee_locations',
+    ]) {
+      expect(description).toContain(table);
+    }
+
+    for (const detail of [
+      'filterExpressions',
+      'selectExpressions',
+      'groupExpressions',
+      '$and',
+      '$or',
+      '$oneof',
+      '$transform',
+      'tableOptions.splits',
+    ]) {
+      expect(description).toContain(detail);
+    }
+  });
+
   it('validates representative MCP inputs', () => {
     const init = TOOL_DEFINITIONS.find(tool => tool.name === 'actual_init');
     const transaction = TOOL_DEFINITIONS.find(
