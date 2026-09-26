@@ -58,6 +58,173 @@ const querySchema = z.object({
 const budgetOperationSchema = z.object({
   operations: operationsSchema,
 });
+const transactionIdsSchema = z.object({
+  transactionIds: z.array(z.string().min(1)).min(1),
+});
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const transactionDateRangeSchema = z.object({
+  startDate: dateSchema,
+  endDate: dateSchema,
+});
+
+function validateTransactionDateRange(startDate, endDate) {
+  const isValidDate = value => {
+    const date = new Date(`${value}T00:00:00Z`);
+    return (
+      !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+    );
+  };
+  if (!isValidDate(startDate) || !isValidDate(endDate)) {
+    throw new Error('startDate and endDate must be valid calendar dates');
+  }
+  if (startDate > endDate) {
+    throw new Error('startDate must be on or before endDate');
+  }
+}
+
+async function queryTransactions(api, filter) {
+  const query = api
+    .q('transactions')
+    .options({ splits: 'all' })
+    .filter(filter)
+    .select('*');
+  const result = await api.aqlQuery(query);
+  return Array.isArray(result) ? result : (result?.data ?? []);
+}
+
+function categorizePluginAvailability(api) {
+  if (typeof api.runCategorizationPlugins !== 'function') {
+    throw new Error('Transaction categorization is not available in this API');
+  }
+  const enabledPlugins = api
+    .getCategorizationPlugins?.()
+    .filter(plugin => plugin.enabled);
+  if (!enabledPlugins?.length) {
+    throw new Error('No enabled categorization plugins are registered');
+  }
+}
+
+function getIneligibleTransactionReason(transaction, accountsById) {
+  if (transaction.is_parent) {
+    return 'Split parent transactions cannot be categorized';
+  }
+  if (transaction.transfer_id != null) {
+    return 'Transfer transactions cannot be categorized';
+  }
+  const account = accountsById.get(transaction.account);
+  if (!account) {
+    return 'The transaction account could not be found';
+  }
+  if (account.offbudget) {
+    return 'Transactions in off-budget accounts cannot be categorized';
+  }
+  return null;
+}
+
+async function categorizeTransactions(api, transactions) {
+  categorizePluginAvailability(api);
+  const accounts = await api.getAccounts();
+  const accountsById = new Map(accounts.map(account => [account.id, account]));
+  const results = [];
+
+  for (const transaction of transactions) {
+    const transactionId = transaction.id;
+    const previousCategory = transaction.category ?? null;
+    const ineligibleReason = getIneligibleTransactionReason(
+      transaction,
+      accountsById,
+    );
+    if (ineligibleReason) {
+      results.push({
+        transactionId,
+        status: 'skipped',
+        reason: ineligibleReason,
+        previousCategory,
+        category: previousCategory,
+      });
+      continue;
+    }
+
+    try {
+      const candidate = await api.runCategorizationPlugins(transaction);
+      if (!candidate) {
+        results.push({
+          transactionId,
+          status: 'no-suggestion',
+          previousCategory,
+          category: previousCategory,
+        });
+        continue;
+      }
+
+      const category = candidate.category;
+      if (category !== previousCategory) {
+        await api.updateTransaction(transactionId, { category });
+      }
+      results.push({
+        transactionId,
+        status:
+          category === previousCategory
+            ? 'unchanged'
+            : previousCategory == null
+              ? 'categorized'
+              : 'recategorized',
+        previousCategory,
+        category,
+        confidence: candidate.confidence,
+        pluginId: candidate.pluginId,
+        reasoning: candidate.reasoning,
+      });
+    } catch (error) {
+      results.push({
+        transactionId,
+        status: 'error',
+        previousCategory,
+        category: previousCategory,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    total: results.length,
+    categorized: results.filter(result => result.status === 'categorized')
+      .length,
+    recategorized: results.filter(result => result.status === 'recategorized')
+      .length,
+    unchanged: results.filter(result => result.status === 'unchanged').length,
+    noSuggestion: results.filter(result => result.status === 'no-suggestion')
+      .length,
+    skipped: results.filter(result => result.status === 'skipped').length,
+    errors: results.filter(result => result.status === 'error').length,
+    results,
+  };
+}
+
+async function categorizeTransactionsByIds(api, transactionIds) {
+  const ids = [...new Set(transactionIds)];
+  const transactions = ids.length
+    ? await queryTransactions(api, { id: { $oneof: ids } })
+    : [];
+  const transactionsById = new Map(
+    transactions.map(transaction => [transaction.id, transaction]),
+  );
+  const results = await categorizeTransactions(
+    api,
+    ids
+      .filter(id => transactionsById.has(id))
+      .map(id => transactionsById.get(id)),
+  );
+  const notFound = ids
+    .filter(id => !transactionsById.has(id))
+    .map(transactionId => ({ transactionId, status: 'not-found' }));
+  return {
+    ...results,
+    total: results.total + notFound.length,
+    skipped: results.skipped + notFound.length,
+    results: [...results.results, ...notFound],
+  };
+}
 
 /**
  * Every public function exported by @actual-app/api is represented here. The
@@ -264,6 +431,54 @@ export const TOOL_DEFINITIONS = [
     (api, args) =>
       api.getTransactions(args.accountId, args.startDate, args.endDate),
     { apiMethod: 'getTransactions', readOnly: true },
+  ),
+  tool(
+    'actual_categorize_transaction',
+    'Run enabled categorization plugins on one transaction, even if it already has a category, and save the prediction.',
+    z.object({ transactionId: z.string().min(1) }),
+    (api, args) => categorizeTransactionsByIds(api, [args.transactionId]),
+    { destructive: true },
+  ),
+  tool(
+    'actual_categorize_transactions',
+    'Run enabled categorization plugins on the listed transactions, even if they already have categories, and save the predictions.',
+    transactionIdsSchema,
+    (api, args) => categorizeTransactionsByIds(api, args.transactionIds),
+    { destructive: true },
+  ),
+  tool(
+    'actual_categorize_uncategorized_transactions_for_account',
+    'Categorize uncategorized transactions in one account. Off-budget transactions, split parents, and transfers are skipped.',
+    z.object({ accountId: z.string().min(1) }),
+    async (api, args) => {
+      const account = (await api.getAccounts()).find(
+        item => item.id === args.accountId,
+      );
+      if (!account) {
+        throw new Error(`Account not found: ${args.accountId}`);
+      }
+      const transactions = await queryTransactions(api, {
+        $and: [{ account: args.accountId }, { category: null }],
+      });
+      return categorizeTransactions(api, transactions);
+    },
+    { destructive: true },
+  ),
+  tool(
+    'actual_categorize_uncategorized_transactions_for_date_range',
+    'Categorize uncategorized transactions across accounts in an inclusive date range. Off-budget transactions, split parents, and transfers are skipped.',
+    transactionDateRangeSchema,
+    async (api, args) => {
+      validateTransactionDateRange(args.startDate, args.endDate);
+      const transactions = await queryTransactions(api, {
+        $and: [
+          { category: null },
+          { date: [{ $gte: args.startDate }, { $lte: args.endDate }] },
+        ],
+      });
+      return categorizeTransactions(api, transactions);
+    },
+    { destructive: true },
   ),
   tool(
     'actual_update_transaction',
