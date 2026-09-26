@@ -59,6 +59,7 @@ export type CategorizationCategory = {
   id: string;
   name: string;
   group?: string;
+  note?: string;
 };
 
 export type EmbeddingMatch = {

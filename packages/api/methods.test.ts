@@ -4,6 +4,8 @@ import * as path from 'path';
 import type { RuleEntity } from '@actual-app/core/types/models';
 import { vi } from 'vitest';
 
+import { getCategorizationCategories } from './categorization-categories';
+
 import * as api from './index';
 
 declare global {
@@ -610,6 +612,11 @@ describe('API CRUD operations', () => {
     // No note exists initially
     const initial = await api.getNote(categoryId);
     expect(initial).toBeNull();
+    expect(
+      (await getCategorizationCategories()).find(
+        category => category.id === categoryId,
+      ),
+    ).not.toHaveProperty('note');
 
     // Set a note
     await api.updateNote(categoryId, 'Test note content');
@@ -623,6 +630,16 @@ describe('API CRUD operations', () => {
       id: categoryId,
       note: 'Updated note content',
     });
+    expect(
+      (await getCategorizationCategories()).find(
+        category => category.id === categoryId,
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        id: categoryId,
+        note: 'Updated note content',
+      }),
+    );
   });
 
   // apis: getRules, getPayeeRules, createRule, updateRule, deleteRule
