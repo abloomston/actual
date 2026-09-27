@@ -50,6 +50,41 @@ describe('embedding categorization plugin', () => {
     expect(serialized).toContain('child');
   });
 
+  it('keeps uncategorized transactions out of the embedding index', async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), 'actual-embeddings-'));
+    const embed = vi.fn<OpenRouterEmbeddingTransport>(async ({ model }) => ({
+      data: [{ embedding: [1, 0] }],
+      model,
+    }));
+    const base = createOpenRouterPlugin({
+      transport: async () => ({ choices: [] }),
+      embeddingTransport: embed,
+    });
+    const plugin = createEmbeddingPlugin({ base, indexPath });
+
+    try {
+      await plugin.indexTransaction(
+        makeTransaction({
+          id: 'previously-categorized',
+          category: 'groceries',
+        }),
+      );
+      expect(await plugin.vectorStore.query([1, 0], 10)).toHaveLength(1);
+
+      await plugin.indexTransaction(
+        makeTransaction({ id: 'previously-categorized', category: null }),
+      );
+      await plugin.indexTransaction(
+        makeTransaction({ id: 'never-categorized', category: null }),
+      );
+
+      expect(embed).toHaveBeenCalledOnce();
+      expect(await plugin.vectorStore.query([1, 0], 10)).toEqual([]);
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  });
+
   it('indexes transactions in Vectra and returns closest examples by category', async () => {
     const indexPath = await mkdtemp(join(tmpdir(), 'actual-embeddings-'));
     const embed = vi.fn<OpenRouterEmbeddingTransport>(

@@ -81,13 +81,8 @@ export function createEmbeddingLlmJudgePlugin(
       ((options.embedding.enabled ?? true) && (options.judge.enabled ?? true)),
     nearestTransactionsPerCategory,
     categorize,
-    async onTransactionCommitted(transaction) {
-      if (transaction.category) {
-        await options.embedding.indexTransaction(transaction);
-      } else {
-        await options.embedding.removeTransaction(transaction.id);
-      }
-    },
+    onTransactionCommitted: transaction =>
+      options.embedding.indexTransaction(transaction),
     onTransactionDeleted: transactionId =>
       options.embedding.removeTransaction(transactionId),
   };

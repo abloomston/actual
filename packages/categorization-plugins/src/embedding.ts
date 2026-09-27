@@ -59,6 +59,7 @@ export type CategorizationCategory = {
   id: string;
   name: string;
   group?: string;
+  note?: string;
 };
 
 export type EmbeddingMatch = {
@@ -273,6 +274,11 @@ export function createEmbeddingPlugin(
   async function indexTransaction(
     transaction: CategorizationTransaction,
   ): Promise<void> {
+    if (!transaction.category) {
+      await removeTransaction(transaction.id);
+      return;
+    }
+
     const vector = await embedTransaction(transaction);
     await vectorStore.upsert({
       id: transaction.id,

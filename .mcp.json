@@ -4,9 +4,8 @@
       "command": "node",
       "args": ["scripts/actual-node-client/mcp-server.mjs"],
       "env": {
-        "ACTUAL_SERVER_URL": "https://localhost:5006",
-        "ACTUAL_MCP_DATA_DIR": "${HOME}/.local/share/actual-node-mcp",
-        "NODE_EXTRA_CA_CERTS": "${HOME}/code/actual/data/https/actual.crt"
+        "ACTUAL_SERVER_URL": "http://127.0.0.1:5006",
+        "ACTUAL_MCP_DATA_DIR": "${HOME}/.local/share/actual-node-mcp"
       },
       "directTools": true
     }

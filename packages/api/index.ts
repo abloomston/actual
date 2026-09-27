@@ -1,9 +1,9 @@
 import { init as initLootCore } from '@actual-app/core/server/main';
 import type { InitConfig, lib } from '@actual-app/core/server/main';
 
+import { getCategorizationCategories } from './categorization-categories';
 import { registerDefaultCategorizationPlugin } from './categorization-default';
 import type { DefaultCategorizationPluginOptions } from './categorization-default';
-import { getCategories } from './methods';
 import { validateNodeVersion } from './validateNodeVersion';
 
 export * from './methods';
@@ -30,23 +30,7 @@ function registerDefaultPluginForBudget(budgetId: string): void {
   const options: DefaultCategorizationPluginOptions = {
     budgetId,
     dataDir: internal.getDataDir(),
-    categories: async () => {
-      const [visibleCategories, hiddenCategories] = await Promise.all([
-        getCategories(),
-        getCategories({ hidden: true }),
-      ]);
-      const categoriesById = new Map(
-        [...visibleCategories, ...hiddenCategories].map(category => [
-          category.id,
-          {
-            id: category.id,
-            name: category.name,
-            group: category.group_id,
-          },
-        ]),
-      );
-      return [...categoriesById.values()];
-    },
+    categories: getCategorizationCategories,
   };
   unregisterDefaultCategorizationPlugin =
     registerDefaultCategorizationPlugin(options);

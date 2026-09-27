@@ -15,7 +15,12 @@ import type {
 
 const categories: CategorizationCategory[] = [
   { id: 'dining', name: 'Dining', group: 'Expenses' },
-  { id: 'groceries', name: 'Groceries', group: 'Expenses' },
+  {
+    id: 'groceries',
+    name: 'Groceries',
+    group: 'Expenses',
+    note: 'Food bought to prepare meals at home.',
+  },
 ];
 
 const transaction = {
@@ -124,6 +129,9 @@ describe('LLM judge categorization plugin', () => {
       serializedMessages.indexOf('Transaction to categorize'),
     );
     expect(serializedMessages).toContain('groceries');
+    expect(serializedMessages).toContain(
+      'Food bought to prepare meals at home.',
+    );
     expect(serializedMessages).toContain('raw_synced_data');
 
     const systemMessage = request?.messages[0];

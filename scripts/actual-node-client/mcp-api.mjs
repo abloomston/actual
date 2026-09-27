@@ -55,9 +55,365 @@ const querySchema = z.object({
   query: jsonObject,
 });
 
+const AQL_QUERY_DESCRIPTION = `Run a read-only ActualQL query (not SQL). The query argument is a serialized Query state, not a query string. Start with actual_q({table:"transactions"}), preserve its defaults, edit the expression arrays, and pass the whole state as {"query": state}.
+
+State keys include table, tableOptions, filterExpressions, selectExpressions, groupExpressions, orderExpressions, calculation, rawMode, withDead, validateRefs, limit, and offset. Keep the defaults returned by actual_q; filters, selections, grouping, and ordering are arrays. Example: count uncategorized transactions by account:
+{"table":"transactions","tableOptions":{},"filterExpressions":[{"category":null}],"selectExpressions":["account.name",{"count":{"$count":"*"}}],"groupExpressions":["account.name"],"orderExpressions":["account.name"],"calculation":false,"rawMode":false,"withDead":false,"validateRefs":true,"limit":null,"offset":null}
+
+Valid schema tables (field names are case-sensitive): transactions, accounts, account_groups, categories, category_groups, cleanup_groups, payees, schedules, rules, notes, preferences, transaction_filters, custom_reports, reflect_budgets, zero_budgets, dashboard_pages, dashboard, and payee_locations. Dot paths traverse reference fields, e.g. account.name or category.group.name; arbitrary SQL and unknown fields are not supported. Common fields: transactions (id, date, amount, account, category, payee, notes, cleared, reconciled, transfer_id, is_parent, is_child, parent_id); accounts (name, offbudget, closed); categories (name, is_income, hidden, group); payees (name, transfer_acct); schedules (name, next_date, completed).
+
+Filters: a plain value means equality (null matches an unset reference); multiple fields/filters are ANDed. Use $and or $or with arrays for explicit logic; an array of conditions on one field means AND. Operators: $eq, $ne, $lt, $lte, $gt, $gte, $oneof, $like, $notlike, $regexp. Date literals use YYYY-MM-DD. Use a condition such as {"date":{"$transform":"$month","$eq":"2026-06"}} for month filtering; date.month is not a field.
+
+Selections are field strings or *; rename a field with {"accountName":"account.name"} or compute an alias with {"total":{"$sum":"$amount"}}. Expression field references start with $. Aggregate functions are $sum and $count; combine them with groupExpressions (field paths or expressions) for grouped output. For a scalar, set calculation:true and selectExpressions:[{"result":{"$count":"*"}}]. Other built-ins include $sumOver, $substr, $lower, $neg, $abs, $idiv, $id, $day, $month, $year, $condition, $nocase, and $literal. Amounts are integer minor units. Order strings are ascending by default; use {"date":"desc"} for direction. limit and offset paginate.
+
+Transactions default to tableOptions.splits="inline" (split children, not their parent rows). "grouped" nests subtransactions under parents; aggregates in grouped mode use non-parent rows to avoid double-counting. "all" returns both parents and children and can double-count; "none" returns parents without children. Deleted rows are excluded unless withDead is true. Results contain data and dependencies; data is normally an array, but calculation queries return a scalar.`;
+
 const budgetOperationSchema = z.object({
   operations: operationsSchema,
 });
+const transactionIdsSchema = z.object({
+  transactionIds: z.array(z.string().min(1)).min(1),
+});
+const transferLinkSchema = z.object({
+  transactionIds: z.tuple([z.string().min(1), z.string().min(1)]),
+});
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const transactionDateRangeSchema = z.object({
+  startDate: dateSchema,
+  endDate: dateSchema,
+});
+
+function validateTransactionDateRange(startDate, endDate) {
+  const isValidDate = value => {
+    const date = new Date(`${value}T00:00:00Z`);
+    return (
+      !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+    );
+  };
+  if (!isValidDate(startDate) || !isValidDate(endDate)) {
+    throw new Error('startDate and endDate must be valid calendar dates');
+  }
+  if (startDate > endDate) {
+    throw new Error('startDate must be on or before endDate');
+  }
+}
+
+async function queryTransactions(api, filter) {
+  const query = api
+    .q('transactions')
+    .options({ splits: 'all' })
+    .filter(filter)
+    .select('*');
+  const result = await api.aqlQuery(query);
+  return Array.isArray(result) ? result : (result?.data ?? []);
+}
+
+async function linkTransactionsAsTransfer(api, core, transactionIds) {
+  const [firstId, secondId] = transactionIds;
+  if (firstId === secondId) {
+    throw new Error('Select two different transactions');
+  }
+
+  const transactions = await queryTransactions(api, {
+    id: { $oneof: transactionIds },
+  });
+  const transactionsById = new Map(
+    transactions
+      .filter(transaction => transactionIds.includes(transaction.id))
+      .map(transaction => [transaction.id, transaction]),
+  );
+  const first = transactionsById.get(firstId);
+  const second = transactionsById.get(secondId);
+
+  if (!first || !second || transactionsById.size !== 2) {
+    throw new Error('Both transactions must exist in the loaded budget');
+  }
+  if (first.is_parent || second.is_parent) {
+    throw new Error('Split parent transactions cannot be linked as transfers');
+  }
+  if (first.reconciled || second.reconciled) {
+    throw new Error(
+      'Reconciled transactions must be reviewed in the app before linking',
+    );
+  }
+  if (first.transfer_id != null || second.transfer_id != null) {
+    throw new Error('Both transactions must be unlinked');
+  }
+  if (first.account === second.account) {
+    throw new Error('Transfer transactions must be in different accounts');
+  }
+  if (first.amount === 0 || first.amount + second.amount !== 0) {
+    throw new Error(
+      'Transfer transactions must have equal and opposite non-zero amounts',
+    );
+  }
+
+  const payees = await api.getPayees();
+  const firstAccountPayees = payees.filter(
+    payee => payee.transfer_acct === first.account,
+  );
+  const secondAccountPayees = payees.filter(
+    payee => payee.transfer_acct === second.account,
+  );
+  if (firstAccountPayees.length !== 1 || secondAccountPayees.length !== 1) {
+    throw new Error(
+      'Each account must have exactly one transfer payee before linking',
+    );
+  }
+
+  if (typeof core?.send !== 'function') {
+    throw new Error('The Actual transaction batch handler is unavailable');
+  }
+
+  const firstPayee = firstAccountPayees[0];
+  const secondPayee = secondAccountPayees[0];
+  await core.send('transactions-batch-update', {
+    updated: [
+      {
+        ...first,
+        category: null,
+        payee: secondPayee.id,
+        transfer_id: second.id,
+      },
+      {
+        ...second,
+        category: null,
+        payee: firstPayee.id,
+        transfer_id: first.id,
+      },
+    ],
+    runTransfers: false,
+  });
+
+  const linkedTransactions = await queryTransactions(api, {
+    id: { $oneof: transactionIds },
+  });
+  const linkedById = new Map(
+    linkedTransactions
+      .filter(transaction => transactionIds.includes(transaction.id))
+      .map(transaction => [transaction.id, transaction]),
+  );
+  const linkedFirst = linkedById.get(firstId);
+  const linkedSecond = linkedById.get(secondId);
+  if (
+    !linkedFirst ||
+    !linkedSecond ||
+    linkedById.size !== 2 ||
+    linkedFirst.transfer_id !== secondId ||
+    linkedSecond.transfer_id !== firstId ||
+    linkedFirst.payee !== secondPayee.id ||
+    linkedSecond.payee !== firstPayee.id ||
+    linkedFirst.account !== first.account ||
+    linkedSecond.account !== second.account ||
+    linkedFirst.amount !== first.amount ||
+    linkedSecond.amount !== second.amount ||
+    linkedFirst.amount + linkedSecond.amount !== 0 ||
+    linkedFirst.date !== first.date ||
+    linkedSecond.date !== second.date ||
+    linkedFirst.category != null ||
+    linkedSecond.category != null
+  ) {
+    throw new Error(
+      'Transfer update returned without a verified reciprocal link; inspect both transactions before retrying',
+    );
+  }
+
+  return {
+    linked: true,
+    transactions: [linkedFirst, linkedSecond],
+  };
+}
+
+function categorizePluginAvailability(api) {
+  if (typeof api.runCategorizationPlugins !== 'function') {
+    throw new Error('Transaction categorization is not available in this API');
+  }
+  const enabledPlugins = api
+    .getCategorizationPlugins?.()
+    .filter(plugin => plugin.enabled);
+  if (!enabledPlugins?.length) {
+    throw new Error('No enabled categorization plugins are registered');
+  }
+}
+
+function getIneligibleTransactionReason(transaction, accountsById) {
+  if (transaction.is_parent) {
+    return 'Split parent transactions cannot be categorized';
+  }
+  if (transaction.transfer_id != null) {
+    return 'Transfer transactions cannot be categorized';
+  }
+  const account = accountsById.get(transaction.account);
+  if (!account) {
+    return 'The transaction account could not be found';
+  }
+  if (account.offbudget) {
+    return 'Transactions in off-budget accounts cannot be categorized';
+  }
+  return null;
+}
+
+const MAX_CATEGORIZATION_CONCURRENCY = 10;
+
+async function mapWithConcurrency(items, concurrency, callback) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await callback(items[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+  return results;
+}
+
+async function categorizeTransactions(api, transactions) {
+  categorizePluginAvailability(api);
+  const accounts = await api.getAccounts();
+  const accountsById = new Map(accounts.map(account => [account.id, account]));
+  const predictions = await mapWithConcurrency(
+    transactions,
+    MAX_CATEGORIZATION_CONCURRENCY,
+    async transaction => {
+      const transactionId = transaction.id;
+      const previousCategory = transaction.category ?? null;
+      const ineligibleReason = getIneligibleTransactionReason(
+        transaction,
+        accountsById,
+      );
+      if (ineligibleReason) {
+        return {
+          kind: 'result',
+          result: {
+            transactionId,
+            status: 'skipped',
+            reason: ineligibleReason,
+            previousCategory,
+            category: previousCategory,
+          },
+        };
+      }
+
+      try {
+        const candidate = await api.runCategorizationPlugins(transaction);
+        if (!candidate) {
+          return {
+            kind: 'result',
+            result: {
+              transactionId,
+              status: 'no-suggestion',
+              previousCategory,
+              category: previousCategory,
+            },
+          };
+        }
+
+        return {
+          kind: 'candidate',
+          transactionId,
+          previousCategory,
+          candidate,
+        };
+      } catch (error) {
+        return {
+          kind: 'result',
+          result: {
+            transactionId,
+            status: 'error',
+            previousCategory,
+            category: previousCategory,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    },
+  );
+  const results = [];
+
+  for (const prediction of predictions) {
+    if (prediction.kind === 'result') {
+      results.push(prediction.result);
+      continue;
+    }
+
+    const { candidate, transactionId, previousCategory } = prediction;
+    const category = candidate.category;
+    if (category !== previousCategory) {
+      try {
+        await api.updateTransaction(transactionId, { category });
+      } catch (error) {
+        results.push({
+          transactionId,
+          status: 'error',
+          previousCategory,
+          category: previousCategory,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+    }
+
+    results.push({
+      transactionId,
+      status:
+        category === previousCategory
+          ? 'unchanged'
+          : previousCategory == null
+            ? 'categorized'
+            : 'recategorized',
+      previousCategory,
+      category,
+      confidence: candidate.confidence,
+      pluginId: candidate.pluginId,
+      reasoning: candidate.reasoning,
+    });
+  }
+
+  return {
+    total: results.length,
+    categorized: results.filter(result => result.status === 'categorized')
+      .length,
+    recategorized: results.filter(result => result.status === 'recategorized')
+      .length,
+    unchanged: results.filter(result => result.status === 'unchanged').length,
+    noSuggestion: results.filter(result => result.status === 'no-suggestion')
+      .length,
+    skipped: results.filter(result => result.status === 'skipped').length,
+    errors: results.filter(result => result.status === 'error').length,
+    results,
+  };
+}
+
+async function categorizeTransactionsByIds(api, transactionIds) {
+  const ids = [...new Set(transactionIds)];
+  const transactions = ids.length
+    ? await queryTransactions(api, { id: { $oneof: ids } })
+    : [];
+  const transactionsById = new Map(
+    transactions.map(transaction => [transaction.id, transaction]),
+  );
+  const results = await categorizeTransactions(
+    api,
+    ids
+      .filter(id => transactionsById.has(id))
+      .map(id => transactionsById.get(id)),
+  );
+  const notFound = ids
+    .filter(id => !transactionsById.has(id))
+    .map(transactionId => ({ transactionId, status: 'not-found' }));
+  return {
+    ...results,
+    total: results.total + notFound.length,
+    skipped: results.skipped + notFound.length,
+    results: [...results.results, ...notFound],
+  };
+}
 
 /**
  * Every public function exported by @actual-app/api is represented here. The
@@ -169,21 +525,21 @@ export const TOOL_DEFINITIONS = [
   ),
   tool(
     'actual_run_query',
-    'Run an AQL query using a serialized Query state object.',
+    'Deprecated legacy alias for actual_aql_query. Accepts the same serialized Query state and returns the same result; prefer actual_aql_query. See that tool description for AQL syntax, schema tables, and an example.',
     querySchema,
     (api, args) => api.runQuery({ serialize: () => args.query }),
     { apiMethod: 'runQuery', readOnly: true },
   ),
   tool(
     'actual_aql_query',
-    'Run an AQL query using a serialized Query state object.',
+    AQL_QUERY_DESCRIPTION,
     querySchema,
     (api, args) => api.aqlQuery({ serialize: () => args.query }),
     { apiMethod: 'aqlQuery', readOnly: true },
   ),
   tool(
     'actual_q',
-    'Create the serialized starting state for an Actual AQL query. Pass the returned state to actual_aql_query or actual_run_query after adding expressions.',
+    'Create the default serialized AQL Query state for a schema table. Preserve the returned defaults, add filterExpressions/selectExpressions/groupExpressions/orderExpressions as needed, then pass the whole state to actual_aql_query. Its description includes the table list, syntax, and example.',
     z.object({ table: z.string().min(1) }),
     (api, args) => api.q(args.table).serialize(),
     { apiMethod: 'q', readOnly: true },
@@ -266,11 +622,67 @@ export const TOOL_DEFINITIONS = [
     { apiMethod: 'getTransactions', readOnly: true },
   ),
   tool(
+    'actual_categorize_transaction',
+    'Run enabled categorization plugins on one transaction, even if it already has a category, and save the prediction.',
+    z.object({ transactionId: z.string().min(1) }),
+    (api, args) => categorizeTransactionsByIds(api, [args.transactionId]),
+    { destructive: true },
+  ),
+  tool(
+    'actual_categorize_transactions',
+    'Run enabled categorization plugins on the listed transactions, even if they already have categories, and save the predictions.',
+    transactionIdsSchema,
+    (api, args) => categorizeTransactionsByIds(api, args.transactionIds),
+    { destructive: true },
+  ),
+  tool(
+    'actual_categorize_uncategorized_transactions_for_account',
+    'Categorize uncategorized transactions in one account. Off-budget transactions, split parents, and transfers are skipped.',
+    z.object({ accountId: z.string().min(1) }),
+    async (api, args) => {
+      const account = (await api.getAccounts()).find(
+        item => item.id === args.accountId,
+      );
+      if (!account) {
+        throw new Error(`Account not found: ${args.accountId}`);
+      }
+      const transactions = await queryTransactions(api, {
+        $and: [{ account: args.accountId }, { category: null }],
+      });
+      return categorizeTransactions(api, transactions);
+    },
+    { destructive: true },
+  ),
+  tool(
+    'actual_categorize_uncategorized_transactions_for_date_range',
+    'Categorize uncategorized transactions across accounts in an inclusive date range. Off-budget transactions, split parents, and transfers are skipped.',
+    transactionDateRangeSchema,
+    async (api, args) => {
+      validateTransactionDateRange(args.startDate, args.endDate);
+      const transactions = await queryTransactions(api, {
+        $and: [
+          { category: null },
+          { date: [{ $gte: args.startDate }, { $lte: args.endDate }] },
+        ],
+      });
+      return categorizeTransactions(api, transactions);
+    },
+    { destructive: true },
+  ),
+  tool(
     'actual_update_transaction',
     'Update selected fields on a transaction.',
     z.object({ id: z.string().min(1), fields: jsonObject }),
     (api, args) => api.updateTransaction(args.id, args.fields),
     { apiMethod: 'updateTransaction', destructive: true },
+  ),
+  tool(
+    'actual_link_transactions_as_transfer',
+    'Link exactly two existing, unlinked transactions as a transfer in one reciprocal batch. Validates different accounts and equal, opposite non-zero amounts, resolves both transfer payees, clears categories, and verifies the link. Split parents and reconciled transactions are rejected.',
+    transferLinkSchema,
+    (api, args, session) =>
+      linkTransactionsAsTransfer(api, session.core, args.transactionIds),
+    { destructive: true },
   ),
   tool(
     'actual_delete_transaction',
@@ -769,6 +1181,7 @@ export class ActualApiSession {
     this.initialized = false;
     this.loadedBudgetId = null;
     this.config = null;
+    this.core = null;
     this.queue = new OperationQueue();
   }
 
@@ -846,7 +1259,7 @@ export class ActualApiSession {
 
     await this.ensureDir(dataDir);
     const api = await this.getApi();
-    await api.init({ dataDir, serverURL, password });
+    this.core = await api.init({ dataDir, serverURL, password });
     api.enableDefaultCategorizationPlugin?.();
     this.initialized = true;
     this.config = { serverURL, dataDir };
@@ -916,6 +1329,7 @@ export class ActualApiSession {
       this.initialized = false;
       this.loadedBudgetId = null;
       this.config = null;
+      this.core = null;
     }
   }
 
