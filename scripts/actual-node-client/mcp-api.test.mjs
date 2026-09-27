@@ -158,6 +158,22 @@ describe('Actual MCP tool catalog', () => {
     ).toBe(false);
   });
 
+  it('exposes a two-transaction transfer-link tool', () => {
+    const linkTransfer = TOOL_DEFINITIONS.find(
+      tool => tool.name === 'actual_link_transactions_as_transfer',
+    );
+
+    expect(
+      linkTransfer.inputSchema.safeParse({
+        transactionIds: ['outgoing', 'incoming'],
+      }).success,
+    ).toBe(true);
+    expect(
+      linkTransfer.inputSchema.safeParse({ transactionIds: ['only-one'] })
+        .success,
+    ).toBe(false);
+  });
+
   it('exposes validated single, list, account, and date-range categorization tools', () => {
     const toolNames = new Set(TOOL_DEFINITIONS.map(tool => tool.name));
     for (const name of [
@@ -265,15 +281,30 @@ describe('ActualApiSession', () => {
   function makeApi({
     transactions = [],
     accounts = [{ id: 'account', offbudget: false }],
+    payees = [],
     candidates = {},
     plugins = [{ id: 'actual-default-embedding-llm-judge', enabled: true }],
   } = {}) {
+    const core = {
+      send: vi.fn(async (name, args) => {
+        if (name !== 'transactions-batch-update') {
+          throw new Error(`Unexpected internal handler: ${name}`);
+        }
+        for (const transaction of args.updated) {
+          const current = transactions.find(item => item.id === transaction.id);
+          Object.assign(current, transaction);
+        }
+        return { updated: args.updated };
+      }),
+    };
     const api = {
-      init: vi.fn(async () => undefined),
+      core,
+      init: vi.fn(async () => core),
       shutdown: vi.fn(async () => undefined),
       getBudgets: vi.fn(async () => [{ name: 'Budget' }]),
       downloadBudget: vi.fn(async () => undefined),
       getAccounts: vi.fn(async () => accounts),
+      getPayees: vi.fn(async () => payees),
       getCategorizationPlugins: vi.fn(() => plugins),
       runCategorizationPlugins: vi.fn(async transaction =>
         Object.hasOwn(candidates, transaction.id)
@@ -339,6 +370,121 @@ describe('ActualApiSession', () => {
     await session.executeTool('actual_init');
     return session;
   }
+
+  it('links two valid transactions through one transfer-safe batch', async () => {
+    const transactions = [
+      {
+        id: 'checking-out',
+        account: 'checking',
+        amount: -4058300,
+        date: '2026-09-04',
+        category: 'uncategorized',
+        transfer_id: null,
+      },
+      {
+        id: 'savings-in',
+        account: 'savings',
+        amount: 4058300,
+        date: '2026-09-04',
+        category: 'uncategorized',
+        transfer_id: null,
+      },
+    ];
+    const api = makeApi({
+      transactions,
+      payees: [
+        { id: 'to-checking', transfer_acct: 'checking' },
+        { id: 'to-savings', transfer_acct: 'savings' },
+      ],
+    });
+    const session = await makeInitializedSession(api);
+
+    const result = await session.executeTool(
+      'actual_link_transactions_as_transfer',
+      { transactionIds: ['checking-out', 'savings-in'] },
+    );
+
+    expect(api.core.send).toHaveBeenCalledTimes(1);
+    expect(api.core.send).toHaveBeenCalledWith('transactions-batch-update', {
+      updated: [
+        expect.objectContaining({
+          id: 'checking-out',
+          category: null,
+          payee: 'to-savings',
+          transfer_id: 'savings-in',
+        }),
+        expect.objectContaining({
+          id: 'savings-in',
+          category: null,
+          payee: 'to-checking',
+          transfer_id: 'checking-out',
+        }),
+      ],
+      runTransfers: false,
+    });
+    expect(result.linked).toBe(true);
+    expect(transactions[0].transfer_id).toBe('savings-in');
+    expect(transactions[1].transfer_id).toBe('checking-out');
+  });
+
+  it('rejects unsafe transfer pairs before sending a batch update', async () => {
+    const transactions = [
+      {
+        id: 'one',
+        account: 'checking',
+        amount: -100,
+        date: '2026-09-04',
+        transfer_id: null,
+      },
+      {
+        id: 'two',
+        account: 'checking',
+        amount: 100,
+        date: '2026-09-04',
+        transfer_id: null,
+      },
+    ];
+    const api = makeApi({ transactions });
+    const session = await makeInitializedSession(api);
+
+    await expect(
+      session.executeTool('actual_link_transactions_as_transfer', {
+        transactionIds: ['one', 'two'],
+      }),
+    ).rejects.toThrow(/different accounts/);
+    expect(api.core.send).not.toHaveBeenCalled();
+  });
+
+  it('refuses to link when either account lacks an unambiguous transfer payee', async () => {
+    const transactions = [
+      {
+        id: 'one',
+        account: 'checking',
+        amount: -100,
+        date: '2026-09-04',
+        transfer_id: null,
+      },
+      {
+        id: 'two',
+        account: 'savings',
+        amount: 100,
+        date: '2026-09-04',
+        transfer_id: null,
+      },
+    ];
+    const api = makeApi({
+      transactions,
+      payees: [{ id: 'to-savings', transfer_acct: 'savings' }],
+    });
+    const session = await makeInitializedSession(api);
+
+    await expect(
+      session.executeTool('actual_link_transactions_as_transfer', {
+        transactionIds: ['one', 'two'],
+      }),
+    ).rejects.toThrow(/exactly one transfer payee/);
+    expect(api.core.send).not.toHaveBeenCalled();
+  });
 
   it('initializes from the injected keyring secret and serializes API calls', async () => {
     const api = makeApi();

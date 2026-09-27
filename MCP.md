@@ -59,5 +59,6 @@ This walkthrough uses no arguments for initialization. It assumes the budget is 
 - The arguments to `actual-budget_actual_init` are optional, but the tool metadata does not specify defaults for them. With an empty argument object, this workflow relies on the MCP setup for server connection details.
 - If no budget appears in the list, it may need to be downloaded using its server Sync ID. This no-argument walkthrough does not download a budget.
 - Syncing requires a loaded budget and a usable server connection. If the MCP setup has no server URL configured, provide the URL when initializing before expecting server sync to work.
+- `actual-budget_actual_shutdown` calls the API shutdown method, which attempts a sync before closing the budget. Do not use it when you need to leave local changes unsynced. Similarly, `actual-budget_actual_download_budget` syncs an existing local budget with the matching Sync ID rather than replacing it from the server. To inspect the server copy without syncing an existing local budget, use a new, empty `dataDir` for the client.
 - A **local budget ID** is used by `actual-budget_actual_load_budget`; a server **Sync ID** is used to download a budget. They are different identifiers.
 - Be deliberate with mutating tools. Check the loaded budget and relevant IDs before making changes, then sync to publish the changes.

@@ -74,6 +74,9 @@ const budgetOperationSchema = z.object({
 const transactionIdsSchema = z.object({
   transactionIds: z.array(z.string().min(1)).min(1),
 });
+const transferLinkSchema = z.object({
+  transactionIds: z.tuple([z.string().min(1), z.string().min(1)]),
+});
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const transactionDateRangeSchema = z.object({
   startDate: dateSchema,
@@ -103,6 +106,122 @@ async function queryTransactions(api, filter) {
     .select('*');
   const result = await api.aqlQuery(query);
   return Array.isArray(result) ? result : (result?.data ?? []);
+}
+
+async function linkTransactionsAsTransfer(api, core, transactionIds) {
+  const [firstId, secondId] = transactionIds;
+  if (firstId === secondId) {
+    throw new Error('Select two different transactions');
+  }
+
+  const transactions = await queryTransactions(api, {
+    id: { $oneof: transactionIds },
+  });
+  const transactionsById = new Map(
+    transactions
+      .filter(transaction => transactionIds.includes(transaction.id))
+      .map(transaction => [transaction.id, transaction]),
+  );
+  const first = transactionsById.get(firstId);
+  const second = transactionsById.get(secondId);
+
+  if (!first || !second || transactionsById.size !== 2) {
+    throw new Error('Both transactions must exist in the loaded budget');
+  }
+  if (first.is_parent || second.is_parent) {
+    throw new Error('Split parent transactions cannot be linked as transfers');
+  }
+  if (first.reconciled || second.reconciled) {
+    throw new Error(
+      'Reconciled transactions must be reviewed in the app before linking',
+    );
+  }
+  if (first.transfer_id != null || second.transfer_id != null) {
+    throw new Error('Both transactions must be unlinked');
+  }
+  if (first.account === second.account) {
+    throw new Error('Transfer transactions must be in different accounts');
+  }
+  if (first.amount === 0 || first.amount + second.amount !== 0) {
+    throw new Error(
+      'Transfer transactions must have equal and opposite non-zero amounts',
+    );
+  }
+
+  const payees = await api.getPayees();
+  const firstAccountPayees = payees.filter(
+    payee => payee.transfer_acct === first.account,
+  );
+  const secondAccountPayees = payees.filter(
+    payee => payee.transfer_acct === second.account,
+  );
+  if (firstAccountPayees.length !== 1 || secondAccountPayees.length !== 1) {
+    throw new Error(
+      'Each account must have exactly one transfer payee before linking',
+    );
+  }
+
+  if (typeof core?.send !== 'function') {
+    throw new Error('The Actual transaction batch handler is unavailable');
+  }
+
+  const firstPayee = firstAccountPayees[0];
+  const secondPayee = secondAccountPayees[0];
+  await core.send('transactions-batch-update', {
+    updated: [
+      {
+        ...first,
+        category: null,
+        payee: secondPayee.id,
+        transfer_id: second.id,
+      },
+      {
+        ...second,
+        category: null,
+        payee: firstPayee.id,
+        transfer_id: first.id,
+      },
+    ],
+    runTransfers: false,
+  });
+
+  const linkedTransactions = await queryTransactions(api, {
+    id: { $oneof: transactionIds },
+  });
+  const linkedById = new Map(
+    linkedTransactions
+      .filter(transaction => transactionIds.includes(transaction.id))
+      .map(transaction => [transaction.id, transaction]),
+  );
+  const linkedFirst = linkedById.get(firstId);
+  const linkedSecond = linkedById.get(secondId);
+  if (
+    !linkedFirst ||
+    !linkedSecond ||
+    linkedById.size !== 2 ||
+    linkedFirst.transfer_id !== secondId ||
+    linkedSecond.transfer_id !== firstId ||
+    linkedFirst.payee !== secondPayee.id ||
+    linkedSecond.payee !== firstPayee.id ||
+    linkedFirst.account !== first.account ||
+    linkedSecond.account !== second.account ||
+    linkedFirst.amount !== first.amount ||
+    linkedSecond.amount !== second.amount ||
+    linkedFirst.amount + linkedSecond.amount !== 0 ||
+    linkedFirst.date !== first.date ||
+    linkedSecond.date !== second.date ||
+    linkedFirst.category != null ||
+    linkedSecond.category != null
+  ) {
+    throw new Error(
+      'Transfer update returned without a verified reciprocal link; inspect both transactions before retrying',
+    );
+  }
+
+  return {
+    linked: true,
+    transactions: [linkedFirst, linkedSecond],
+  };
 }
 
 function categorizePluginAvailability(api) {
@@ -556,6 +675,14 @@ export const TOOL_DEFINITIONS = [
     z.object({ id: z.string().min(1), fields: jsonObject }),
     (api, args) => api.updateTransaction(args.id, args.fields),
     { apiMethod: 'updateTransaction', destructive: true },
+  ),
+  tool(
+    'actual_link_transactions_as_transfer',
+    'Link exactly two existing, unlinked transactions as a transfer in one reciprocal batch. Validates different accounts and equal, opposite non-zero amounts, resolves both transfer payees, clears categories, and verifies the link. Split parents and reconciled transactions are rejected.',
+    transferLinkSchema,
+    (api, args, session) =>
+      linkTransactionsAsTransfer(api, session.core, args.transactionIds),
+    { destructive: true },
   ),
   tool(
     'actual_delete_transaction',
@@ -1054,6 +1181,7 @@ export class ActualApiSession {
     this.initialized = false;
     this.loadedBudgetId = null;
     this.config = null;
+    this.core = null;
     this.queue = new OperationQueue();
   }
 
@@ -1131,7 +1259,7 @@ export class ActualApiSession {
 
     await this.ensureDir(dataDir);
     const api = await this.getApi();
-    await api.init({ dataDir, serverURL, password });
+    this.core = await api.init({ dataDir, serverURL, password });
     api.enableDefaultCategorizationPlugin?.();
     this.initialized = true;
     this.config = { serverURL, dataDir };
@@ -1201,6 +1329,7 @@ export class ActualApiSession {
       this.initialized = false;
       this.loadedBudgetId = null;
       this.config = null;
+      this.core = null;
     }
   }
 
