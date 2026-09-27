@@ -543,6 +543,83 @@ describe('ActualApiSession', () => {
     });
   });
 
+  it('categorizes a batch with a rolling maximum of ten concurrent predictions', async () => {
+    const transactions = Array.from({ length: 12 }, (_, index) => ({
+      id: `tx-${index}`,
+      account: 'account',
+      date: `2026-04-${String(index + 1).padStart(2, '0')}`,
+      amount: -100,
+      category: null,
+    }));
+    const api = makeApi({ transactions });
+    const startedIds = [];
+    const completedIds = new Set();
+    const releaseTransactions = new Map();
+    const initiallyBlockedIds = new Set(
+      transactions.slice(0, 10).map(transaction => transaction.id),
+    );
+    let active = 0;
+    let maximumActive = 0;
+
+    api.runCategorizationPlugins.mockImplementation(async transaction => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      startedIds.push(transaction.id);
+
+      if (initiallyBlockedIds.has(transaction.id)) {
+        await new Promise(resolve => {
+          releaseTransactions.set(transaction.id, resolve);
+        });
+      }
+
+      active -= 1;
+      completedIds.add(transaction.id);
+      return {
+        category: `category-${transaction.id}`,
+        confidence: 0.9,
+        pluginId: 'actual-default-embedding-llm-judge',
+      };
+    });
+
+    const session = await makeInitializedSession(api);
+    const resultPromise = session.executeTool(
+      'actual_categorize_transactions',
+      {
+        transactionIds: transactions.map(transaction => transaction.id),
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(startedIds).toHaveLength(10);
+    });
+    expect(active).toBe(10);
+    expect(maximumActive).toBe(10);
+
+    releaseTransactions.get('tx-0')?.();
+    await vi.waitFor(() => {
+      expect(startedIds).toHaveLength(transactions.length);
+    });
+
+    expect(completedIds.has('tx-0')).toBe(true);
+    expect(completedIds.has('tx-1')).toBe(false);
+    expect(completedIds.has('tx-10')).toBe(true);
+    expect(completedIds.has('tx-11')).toBe(true);
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+
+    for (const transaction of transactions.slice(1, 10)) {
+      releaseTransactions.get(transaction.id)?.();
+    }
+    const result = await resultPromise;
+
+    expect(maximumActive).toBe(10);
+    expect(api.runCategorizationPlugins).toHaveBeenCalledTimes(12);
+    expect(api.updateTransaction).toHaveBeenCalledTimes(12);
+    expect(result).toMatchObject({ total: 12, categorized: 12 });
+    expect(result.results.map(item => item.transactionId)).toEqual(
+      transactions.map(transaction => transaction.id),
+    );
+  });
+
   it('categorizes only eligible uncategorized transactions for an account', async () => {
     const transactions = [
       {

@@ -134,69 +134,126 @@ function getIneligibleTransactionReason(transaction, accountsById) {
   return null;
 }
 
+const MAX_CATEGORIZATION_CONCURRENCY = 10;
+
+async function mapWithConcurrency(items, concurrency, callback) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await callback(items[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+  return results;
+}
+
 async function categorizeTransactions(api, transactions) {
   categorizePluginAvailability(api);
   const accounts = await api.getAccounts();
   const accountsById = new Map(accounts.map(account => [account.id, account]));
+  const predictions = await mapWithConcurrency(
+    transactions,
+    MAX_CATEGORIZATION_CONCURRENCY,
+    async transaction => {
+      const transactionId = transaction.id;
+      const previousCategory = transaction.category ?? null;
+      const ineligibleReason = getIneligibleTransactionReason(
+        transaction,
+        accountsById,
+      );
+      if (ineligibleReason) {
+        return {
+          kind: 'result',
+          result: {
+            transactionId,
+            status: 'skipped',
+            reason: ineligibleReason,
+            previousCategory,
+            category: previousCategory,
+          },
+        };
+      }
+
+      try {
+        const candidate = await api.runCategorizationPlugins(transaction);
+        if (!candidate) {
+          return {
+            kind: 'result',
+            result: {
+              transactionId,
+              status: 'no-suggestion',
+              previousCategory,
+              category: previousCategory,
+            },
+          };
+        }
+
+        return {
+          kind: 'candidate',
+          transactionId,
+          previousCategory,
+          candidate,
+        };
+      } catch (error) {
+        return {
+          kind: 'result',
+          result: {
+            transactionId,
+            status: 'error',
+            previousCategory,
+            category: previousCategory,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    },
+  );
   const results = [];
 
-  for (const transaction of transactions) {
-    const transactionId = transaction.id;
-    const previousCategory = transaction.category ?? null;
-    const ineligibleReason = getIneligibleTransactionReason(
-      transaction,
-      accountsById,
-    );
-    if (ineligibleReason) {
-      results.push({
-        transactionId,
-        status: 'skipped',
-        reason: ineligibleReason,
-        previousCategory,
-        category: previousCategory,
-      });
+  for (const prediction of predictions) {
+    if (prediction.kind === 'result') {
+      results.push(prediction.result);
       continue;
     }
 
-    try {
-      const candidate = await api.runCategorizationPlugins(transaction);
-      if (!candidate) {
+    const { candidate, transactionId, previousCategory } = prediction;
+    const category = candidate.category;
+    if (category !== previousCategory) {
+      try {
+        await api.updateTransaction(transactionId, { category });
+      } catch (error) {
         results.push({
           transactionId,
-          status: 'no-suggestion',
+          status: 'error',
           previousCategory,
           category: previousCategory,
+          error: error instanceof Error ? error.message : String(error),
         });
         continue;
       }
-
-      const category = candidate.category;
-      if (category !== previousCategory) {
-        await api.updateTransaction(transactionId, { category });
-      }
-      results.push({
-        transactionId,
-        status:
-          category === previousCategory
-            ? 'unchanged'
-            : previousCategory == null
-              ? 'categorized'
-              : 'recategorized',
-        previousCategory,
-        category,
-        confidence: candidate.confidence,
-        pluginId: candidate.pluginId,
-        reasoning: candidate.reasoning,
-      });
-    } catch (error) {
-      results.push({
-        transactionId,
-        status: 'error',
-        previousCategory,
-        category: previousCategory,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
+
+    results.push({
+      transactionId,
+      status:
+        category === previousCategory
+          ? 'unchanged'
+          : previousCategory == null
+            ? 'categorized'
+            : 'recategorized',
+      previousCategory,
+      category,
+      confidence: candidate.confidence,
+      pluginId: candidate.pluginId,
+      reasoning: candidate.reasoning,
+    });
   }
 
   return {
