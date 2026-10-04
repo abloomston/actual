@@ -142,6 +142,7 @@ export const GroupMonth = memo(function GroupMonth({
   group,
 }: CategoryGroupMonthProps) {
   const { id } = group;
+  const abbreviate = useAbbreviateAmounts('budget');
 
   return (
     <View
@@ -157,6 +158,7 @@ export const GroupMonth = memo(function GroupMonth({
         name="budgeted"
         width="flex"
         textAlign="right"
+        abbreviate={abbreviate}
         style={{ fontWeight: 600, ...styles.tnum }}
         valueProps={{
           binding: trackingBudget.groupBudgeted(id),
@@ -167,6 +169,7 @@ export const GroupMonth = memo(function GroupMonth({
         name="spent"
         width="flex"
         textAlign="right"
+        abbreviate={abbreviate}
         style={{ fontWeight: 600, ...styles.tnum }}
         valueProps={{
           binding: trackingBudget.groupSumAmount(id),
@@ -178,6 +181,7 @@ export const GroupMonth = memo(function GroupMonth({
           name="balance"
           width="flex"
           textAlign="right"
+          abbreviate={abbreviate}
           style={{
             fontWeight: 600,
             paddingRight: styles.monthRightPadding,

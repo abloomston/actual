@@ -718,6 +718,7 @@ export type SheetCellProps<
   };
   onSave?: (value) => void;
   textAlign?: CSSProperties['textAlign'];
+  abbreviate?: boolean;
 };
 export function SheetCell<
   SheetName extends SheetNames,
@@ -728,6 +729,7 @@ export function SheetCell<
   inputProps,
   textAlign,
   onSave,
+  abbreviate,
   ...props
 }: SheetCellProps<SheetName, FieldName>) {
   const {
@@ -757,9 +759,19 @@ export function SheetCell<
       textAlign={textAlign}
       {...props}
       value={String(sheetValue ?? '')}
-      formatter={value =>
-        props.formatter ? props.formatter(value, type) : format(value, type)
-      }
+      formatter={value => {
+        if (props.formatter) {
+          return props.formatter(value, type);
+        }
+
+        const isFinancial =
+          type === 'financial' ||
+          type === 'financial-with-sign' ||
+          type === 'financial-no-decimals';
+        return abbreviate && isFinancial
+          ? format.compactCurrency(Number(value))
+          : format(value, type);
+      }}
       privacyFilter={
         privacyFilter != null
           ? privacyFilter
