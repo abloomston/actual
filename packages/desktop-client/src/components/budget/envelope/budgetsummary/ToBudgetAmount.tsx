@@ -15,6 +15,7 @@ import {
 } from '#components/budget/envelope/EnvelopeBudgetComponents';
 import { FinancialText } from '#components/FinancialText';
 import { PrivacyFilter } from '#components/PrivacyFilter';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import { useFormat } from '#hooks/useFormat';
 import { envelopeBudget } from '#spreadsheet/bindings';
 
@@ -44,6 +45,7 @@ export function ToBudgetAmount({
     value: 0,
   });
   const format = useFormat();
+  const abbreviate = useAbbreviateAmounts('budget');
   const availableValue = sheetValue;
   if (typeof availableValue !== 'number' && availableValue !== null) {
     throw new Error(
@@ -104,7 +106,11 @@ export function ToBudgetAmount({
                 amountStyle,
               ])}
             >
-              <FinancialText>{format(num, 'financial')}</FinancialText>
+              <FinancialText>
+                {abbreviate
+                  ? format.compactCurrency(num)
+                  : format(num, 'financial')}
+              </FinancialText>
             </Block>
           </PrivacyFilter>
         </Tooltip>

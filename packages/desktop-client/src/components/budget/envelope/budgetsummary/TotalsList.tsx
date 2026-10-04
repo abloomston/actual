@@ -10,6 +10,7 @@ import { View } from '@actual-app/components/view';
 
 import { EnvelopeCellValue } from '#components/budget/envelope/EnvelopeBudgetComponents';
 import { CellValueText } from '#components/spreadsheet/CellValue';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import { useFormat } from '#hooks/useFormat';
 import type { FormatType } from '#hooks/useFormat';
 import { envelopeBudget } from '#spreadsheet/bindings';
@@ -24,9 +25,12 @@ import { envelopeBudget } from '#spreadsheet/bindings';
 function makeSignedFormatter(
   format: ReturnType<typeof useFormat>,
   invert = false,
+  abbreviate = false,
 ) {
   return (value: number, type?: FormatType) => {
-    const v = format(Math.abs(value), type);
+    const v = abbreviate
+      ? format.compactCurrency(Math.abs(value))
+      : format(Math.abs(value), type);
     if (value === 0) {
       return '-' + v;
     }
@@ -48,8 +52,9 @@ type TotalsListProps = {
 
 export function TotalsList({ prevMonthName, style }: TotalsListProps) {
   const format = useFormat();
-  const signedFormatter = makeSignedFormatter(format);
-  const invertedSignedFormatter = makeSignedFormatter(format, true);
+  const abbreviate = useAbbreviateAmounts('budget');
+  const signedFormatter = makeSignedFormatter(format, false, abbreviate);
+  const invertedSignedFormatter = makeSignedFormatter(format, true, abbreviate);
   return (
     <View
       style={{

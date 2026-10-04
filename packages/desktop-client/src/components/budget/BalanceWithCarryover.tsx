@@ -17,8 +17,10 @@ import type { TransObjectLiteral } from '@actual-app/core/types/util';
 import { css } from '@emotion/css';
 
 import { CellValue, CellValueText } from '#components/spreadsheet/CellValue';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { useFormat } from '#hooks/useFormat';
+import type { FormatType } from '#hooks/useFormat';
 import { useSheetValue } from '#hooks/useSheetValue';
 import type { Binding } from '#spreadsheet';
 
@@ -127,6 +129,12 @@ export function BalanceWithCarryover({
     [budgetedValue, goalValue, isGoalTemplatesEnabled, longGoalValue],
   );
   const format = useFormat();
+  const abbreviate = useAbbreviateAmounts('budget');
+  const formatAmount = useCallback(
+    (value: number, type: FormatType = 'financial') =>
+      abbreviate ? format.compactCurrency(value) : format(value, type),
+    [abbreviate, format],
+  );
 
   const getDifferenceToGoal = useCallback(
     (balanceValue: number) =>
@@ -163,26 +171,14 @@ export function BalanceWithCarryover({
               <span style={{ color: theme.templateNumberFunded }}>
                 <Trans>
                   Overfunded (
-                  {{
-                    amount: format(
-                      getDifferenceToGoal(balanceValue),
-                      'financial',
-                    ),
-                  }}
-                  )
+                  {{ amount: formatAmount(getDifferenceToGoal(balanceValue)) }})
                 </Trans>
               </span>
             ) : (
               <span style={{ color: theme.templateNumberUnderFunded }}>
                 <Trans>
                   Underfunded (
-                  {{
-                    amount: format(
-                      getDifferenceToGoal(balanceValue),
-                      'financial',
-                    ),
-                  }}
-                  )
+                  {{ amount: formatAmount(getDifferenceToGoal(balanceValue)) }})
                 </Trans>
               </span>
             )}
@@ -205,7 +201,7 @@ export function BalanceWithCarryover({
               <div>
                 {
                   {
-                    amount: format(goalValue, 'financial'),
+                    amount: formatAmount(goalValue),
                   } as TransObjectLiteral
                 }
               </div>
@@ -218,7 +214,7 @@ export function BalanceWithCarryover({
                 <div>
                   {
                     {
-                      amount: format(budgetedValue, 'financial'),
+                      amount: formatAmount(budgetedValue),
                     } as TransObjectLiteral
                   }
                 </div>
@@ -229,7 +225,7 @@ export function BalanceWithCarryover({
                 <div>
                   {
                     {
-                      amount: format(balanceValue, type),
+                      amount: formatAmount(balanceValue, type),
                     } as TransObjectLiteral
                   }
                 </div>
@@ -239,12 +235,24 @@ export function BalanceWithCarryover({
         </>
       );
     },
-    [budgetedValue, format, getDifferenceToGoal, goalValue, longGoalValue, t],
+    [
+      budgetedValue,
+      formatAmount,
+      getDifferenceToGoal,
+      goalValue,
+      longGoalValue,
+      t,
+    ],
   );
 
   return (
-    <CellValue binding={balance} type="financial" {...props}>
-      {({ type, name, value: balanceValue }) => (
+    <CellValue
+      binding={balance}
+      type="financial"
+      abbreviate={abbreviate}
+      {...props}
+    >
+      {({ type, name, value: balanceValue, abbreviate: shouldAbbreviate }) => (
         <>
           <Tooltip
             content={
@@ -268,6 +276,7 @@ export function BalanceWithCarryover({
                 type,
                 name,
                 value: balanceValue,
+                abbreviate: shouldAbbreviate,
                 className: getDefaultClassName(balanceValue),
               })
             ) : (
@@ -275,6 +284,7 @@ export function BalanceWithCarryover({
                 type={type}
                 name={name}
                 value={balanceValue}
+                abbreviate={shouldAbbreviate}
                 className={getDefaultClassName(balanceValue)}
               />
             )}

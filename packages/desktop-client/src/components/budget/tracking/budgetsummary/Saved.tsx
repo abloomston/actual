@@ -14,6 +14,7 @@ import { useTrackingSheetValue } from '#components/budget/tracking/TrackingBudge
 import { makeAmountFullStyle } from '#components/budget/util';
 import { FinancialText } from '#components/FinancialText';
 import { PrivacyFilter } from '#components/PrivacyFilter';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import { useFormat } from '#hooks/useFormat';
 import { trackingBudget } from '#spreadsheet/bindings';
 
@@ -27,6 +28,17 @@ export function Saved({ projected, style }: SavedProps) {
     useTrackingSheetValue(trackingBudget.totalBudgetedSaved) || 0;
   const totalSaved = useTrackingSheetValue(trackingBudget.totalSaved) || 0;
   const format = useFormat();
+  const abbreviate = useAbbreviateAmounts('budget');
+  const formatAmount = (
+    amount: number,
+    type: 'financial' | 'financial-with-sign',
+  ) => {
+    if (!abbreviate) {
+      return format(amount, type);
+    }
+
+    return `${type === 'financial-with-sign' && amount >= 0 ? '+' : ''}${format.compactCurrency(amount)}`;
+  };
   const saved = projected ? budgetedSaved : totalSaved;
   const isNegative = saved < 0;
   const diff = totalSaved - budgetedSaved;
@@ -51,7 +63,7 @@ export function Saved({ projected, style }: SavedProps) {
               left={t('Projected savings:')}
               right={
                 <FinancialText style={makeAmountFullStyle(budgetedSaved)}>
-                  {format(budgetedSaved, 'financial-with-sign')}
+                  {formatAmount(budgetedSaved, 'financial-with-sign')}
                 </FinancialText>
               }
             />
@@ -59,7 +71,7 @@ export function Saved({ projected, style }: SavedProps) {
               left={t('Difference:')}
               right={
                 <FinancialText style={makeAmountFullStyle(diff)}>
-                  {format(diff, 'financial-with-sign')}
+                  {formatAmount(diff, 'financial-with-sign')}
                 </FinancialText>
               }
             />
@@ -81,7 +93,7 @@ export function Saved({ projected, style }: SavedProps) {
           })}
         >
           <PrivacyFilter>
-            <FinancialText>{format(saved, 'financial')}</FinancialText>
+            <FinancialText>{formatAmount(saved, 'financial')}</FinancialText>
           </PrivacyFilter>
         </View>
       </Tooltip>

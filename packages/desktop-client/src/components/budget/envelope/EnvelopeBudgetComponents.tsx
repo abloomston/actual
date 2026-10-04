@@ -22,6 +22,7 @@ import { NotesButton } from '#components/NotesButton';
 import { CellValue, CellValueText } from '#components/spreadsheet/CellValue';
 import { Field, Row, SheetCell } from '#components/table';
 import type { SheetCellProps } from '#components/table';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import { useCategoryScheduleGoalTemplateIndicator } from '#hooks/useCategoryScheduleGoalTemplateIndicator';
 import { useFormat } from '#hooks/useFormat';
 import { useNavigate } from '#hooks/useNavigate';
@@ -53,7 +54,8 @@ export const EnvelopeCellValue = <
 >(
   props: ComponentProps<typeof CellValue<'envelope-budget', FieldName>>,
 ) => {
-  return <CellValue {...props} />;
+  const abbreviate = useAbbreviateAmounts('budget');
+  return <CellValue {...props} abbreviate={abbreviate} />;
 };
 
 const EnvelopeSheetCell = <FieldName extends SheetFields<'envelope-budget'>>(

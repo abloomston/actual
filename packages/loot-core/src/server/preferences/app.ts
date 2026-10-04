@@ -145,11 +145,8 @@ async function saveGlobalPrefs(prefs: GlobalPrefs) {
   if (prefs.showNewsFeed !== undefined) {
     await asyncStorage.setItem('showNewsFeed', prefs.showNewsFeed);
   }
-  if (prefs.abbreviateSidebarBalances !== undefined) {
-    await asyncStorage.setItem(
-      'abbreviate-sidebar-balances',
-      prefs.abbreviateSidebarBalances,
-    );
+  if (prefs.abbreviateAmounts !== undefined) {
+    await asyncStorage.setItem('abbreviate-amounts', prefs.abbreviateAmounts);
   }
   return 'ok';
 }
@@ -172,7 +169,8 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
     notifyWhenUpdateIsAvailable,
     lastSeenNewsDate,
     showNewsFeed,
-    'abbreviate-sidebar-balances': abbreviateSidebarBalances,
+    'abbreviate-amounts': abbreviateAmounts,
+    'abbreviate-sidebar-balances': legacyAbbreviateSidebarBalances,
   } = await asyncStorage.multiGet([
     'floating-sidebar',
     'category-expanded-state',
@@ -190,6 +188,7 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
     'notifyWhenUpdateIsAvailable',
     'lastSeenNewsDate',
     'showNewsFeed',
+    'abbreviate-amounts',
     'abbreviate-sidebar-balances',
   ] as const);
   return {
@@ -221,10 +220,9 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
         : notifyWhenUpdateIsAvailable, // default to true
     lastSeenNewsDate: lastSeenNewsDate || undefined,
     showNewsFeed: showNewsFeed === undefined ? true : showNewsFeed, // default to true
-    abbreviateSidebarBalances:
-      abbreviateSidebarBalances === undefined
-        ? true
-        : abbreviateSidebarBalances,
+    abbreviateAmounts:
+      abbreviateAmounts ??
+      (legacyAbbreviateSidebarBalances === false ? [] : ['accounts']),
   };
 }
 

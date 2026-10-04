@@ -24,6 +24,7 @@ import { NotesButton } from '#components/NotesButton';
 import { CellValue, CellValueText } from '#components/spreadsheet/CellValue';
 import { Field, SheetCell } from '#components/table';
 import type { SheetCellProps } from '#components/table';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import { useCategoryScheduleGoalTemplateIndicator } from '#hooks/useCategoryScheduleGoalTemplateIndicator';
 import { useFormat } from '#hooks/useFormat';
 import { useNavigate } from '#hooks/useNavigate';
@@ -47,7 +48,8 @@ export const useTrackingSheetValue = <
 const TrackingCellValue = <FieldName extends SheetFields<'tracking-budget'>>(
   props: ComponentProps<typeof CellValue<'tracking-budget', FieldName>>,
 ) => {
-  return <CellValue {...props} />;
+  const abbreviate = useAbbreviateAmounts('budget');
+  return <CellValue {...props} abbreviate={abbreviate} />;
 };
 
 const TrackingSheetCell = <FieldName extends SheetFields<'tracking-budget'>>(

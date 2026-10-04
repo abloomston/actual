@@ -9,6 +9,7 @@ import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 
 import { CellValue } from '#components/spreadsheet/CellValue';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import type { Binding, SheetFields } from '#spreadsheet';
 
 type BudgetTotalProps<
@@ -31,6 +32,8 @@ export function BudgetTotal<
   ProgressComponent,
   style,
 }: BudgetTotalProps<CurrentField, TargetField>) {
+  const abbreviate = useAbbreviateAmounts('budget');
+
   return (
     <View
       style={{
@@ -52,13 +55,25 @@ export function BudgetTotal<
           <Trans
             i18nKey="<allocatedAmount /> <italic>of <totalAmount /></italic>"
             components={{
-              allocatedAmount: <CellValue binding={current} type="financial" />,
+              allocatedAmount: (
+                <CellValue
+                  binding={current}
+                  type="financial"
+                  abbreviate={abbreviate}
+                />
+              ),
               italic: (
                 <Text
                   style={{ color: theme.pageTextLight, fontStyle: 'italic' }}
                 />
               ),
-              totalAmount: <CellValue binding={target} type="financial" />,
+              totalAmount: (
+                <CellValue
+                  binding={target}
+                  type="financial"
+                  abbreviate={abbreviate}
+                />
+              ),
             }}
           />
         </Text>

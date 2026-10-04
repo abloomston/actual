@@ -1,7 +1,11 @@
 // @ts-strict-ignore
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 
+import { Button } from '@actual-app/components/button';
+import { SvgExpandArrow } from '@actual-app/components/icons/v0';
+import { Menu } from '@actual-app/components/menu';
+import { Popover } from '@actual-app/components/popover';
 import { Select } from '@actual-app/components/select';
 import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
@@ -13,6 +17,7 @@ import { css } from '@emotion/css';
 
 import { Checkbox } from '#components/forms';
 import { useSidebar } from '#components/sidebar/SidebarProvider';
+import type { AmountAbbreviationTarget } from '#hooks/useAbbreviateAmounts';
 import { useDateFormat } from '#hooks/useDateFormat';
 import { useDaysOfWeek } from '#hooks/useDaysOfWeek';
 import { useGlobalPref } from '#hooks/useGlobalPref';
@@ -31,6 +36,72 @@ const dateFormats: { value: SyncedPrefs['dateFormat']; label: string }[] = [
   { value: 'dd-MM-yyyy', label: 'DD-MM-YYYY' },
 ];
 
+function AbbreviateAmountsSelect() {
+  const { t } = useTranslation();
+  const [savedTargets = ['accounts'], setTargets] =
+    useGlobalPref('abbreviateAmounts');
+  const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef(null);
+  const targets: AmountAbbreviationTarget[] = savedTargets;
+  const selectedLabels = targets.map(target =>
+    target === 'accounts' ? t('Accounts pane') : t('Budget view'),
+  );
+
+  const toggleTarget = (target: AmountAbbreviationTarget) => {
+    setTargets(
+      targets.includes(target)
+        ? targets.filter(selected => selected !== target)
+        : [...targets, target],
+    );
+  };
+
+  return (
+    <>
+      <Button
+        ref={triggerRef}
+        variant="normal"
+        aria-label={t('Abbreviate amounts in')}
+        onPress={() => setIsOpen(true)}
+        style={{ width: '100%' }}
+      >
+        <span
+          style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {selectedLabels.length ? selectedLabels.join(', ') : t('None')}
+        </span>
+        <SvgExpandArrow style={{ width: 7, height: 7, marginLeft: 5 }} />
+      </Button>
+      <Popover
+        triggerRef={triggerRef}
+        placement="bottom start"
+        isOpen={isOpen}
+        onOpenChange={() => setIsOpen(false)}
+        style={{ width: 200 }}
+      >
+        <Menu<AmountAbbreviationTarget>
+          onMenuSelect={toggleTarget}
+          items={[
+            {
+              name: 'accounts',
+              text: t('Accounts pane'),
+              toggle: targets.includes('accounts'),
+            },
+            {
+              name: 'budget',
+              text: t('Budget view'),
+              toggle: targets.includes('budget'),
+            },
+          ]}
+        />
+      </Popover>
+    </>
+  );
+}
+
 export function FormatSettings() {
   const { t } = useTranslation();
   const dispatch = useDispatch();
@@ -44,8 +115,6 @@ export function FormatSettings() {
   const [_numberFormat] = useSyncedPref('numberFormat');
   const numberFormat = _numberFormat || 'comma-dot';
   const [hideFraction, setHideFractionPref] = useSyncedPref('hideFraction');
-  const [abbreviateSidebarBalances, setAbbreviateSidebarBalancesPref] =
-    useGlobalPref('abbreviateSidebarBalances');
 
   const daysOfWeek = useDaysOfWeek();
 
@@ -101,18 +170,12 @@ export function FormatSettings() {
               </label>
             </Text>
 
-            <Text style={{ display: 'flex' }}>
-              <Checkbox
-                id="settings-abbreviateSidebarBalances"
-                checked={abbreviateSidebarBalances !== false}
-                onChange={e =>
-                  setAbbreviateSidebarBalancesPref(e.currentTarget.checked)
-                }
-              />
-              <label htmlFor="settings-abbreviateSidebarBalances">
-                <Trans>Abbreviate account balances in sidebar</Trans>
-              </label>
-            </Text>
+            <View style={{ gap: 4 }}>
+              <Text>
+                <Trans>Abbreviate amounts in</Trans>
+              </Text>
+              <AbbreviateAmountsSelect />
+            </View>
           </Column>
 
           <Column title={t('Dates')}>
