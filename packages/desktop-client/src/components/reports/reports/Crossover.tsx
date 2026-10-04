@@ -386,6 +386,16 @@ function CrossoverInner({ widget }: CrossoverInnerProps) {
 
   // Get target monthly income from spreadsheet data
   const targetMonthlyIncome = displayData?.targetMonthlyIncome ?? null;
+  const targetMonthlyIncomeInThousands =
+    targetMonthlyIncome == null
+      ? null
+      : Math.round(
+          targetMonthlyIncome / 10 ** format.currency.decimalPlaces / 1000,
+        );
+  const formattedTargetMonthlyIncomeInThousands =
+    targetMonthlyIncomeInThousands == null
+      ? null
+      : format(targetMonthlyIncomeInThousands, 'number').replace(/[.,]0+$/, '');
 
   // Get target nest egg from spreadsheet data
   const targetNestEgg = displayData?.targetNestEgg ?? null;
@@ -1073,10 +1083,10 @@ function CrossoverInner({ widget }: CrossoverInnerProps) {
                 <span>
                   <Trans>Target Monthly Income</Trans>:{' '}
                   <PrivacyFilter>
-                    {targetMonthlyIncome != null &&
-                    !isNaN(targetMonthlyIncome) ? (
+                    {targetMonthlyIncomeInThousands != null &&
+                    !isNaN(targetMonthlyIncomeInThousands) ? (
                       <FinancialText>
-                        {format(targetMonthlyIncome, 'financial')}
+                        {formattedTargetMonthlyIncomeInThousands}k
                       </FinancialText>
                     ) : (
                       t('N/A')
