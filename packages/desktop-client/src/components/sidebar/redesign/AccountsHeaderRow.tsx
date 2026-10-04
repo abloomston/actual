@@ -11,11 +11,11 @@ import { spacing } from '@actual-app/components/tokens';
 import { View } from '@actual-app/components/view';
 
 import { Link } from '#components/common/Link';
+import { SidebarBalance } from '#components/sidebar/SidebarBalance';
 import { replaceModal } from '#modals/modalsSlice';
 import { useDispatch } from '#redux';
 import * as bindings from '#spreadsheet/bindings';
 
-import { SidebarBalance } from './SidebarBalance';
 import { SidebarIconButton } from './SidebarIconButton';
 
 type AccountsHeaderRowProps = {

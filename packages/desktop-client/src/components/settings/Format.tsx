@@ -15,6 +15,7 @@ import { Checkbox } from '#components/forms';
 import { useSidebar } from '#components/sidebar/SidebarProvider';
 import { useDateFormat } from '#hooks/useDateFormat';
 import { useDaysOfWeek } from '#hooks/useDaysOfWeek';
+import { useGlobalPref } from '#hooks/useGlobalPref';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { saveSyncedPrefs } from '#prefs/prefsSlice';
 import { useDispatch } from '#redux';
@@ -43,6 +44,8 @@ export function FormatSettings() {
   const [_numberFormat] = useSyncedPref('numberFormat');
   const numberFormat = _numberFormat || 'comma-dot';
   const [hideFraction, setHideFractionPref] = useSyncedPref('hideFraction');
+  const [abbreviateSidebarBalances, setAbbreviateSidebarBalancesPref] =
+    useGlobalPref('abbreviateSidebarBalances');
 
   const daysOfWeek = useDaysOfWeek();
 
@@ -95,6 +98,19 @@ export function FormatSettings() {
               />
               <label htmlFor="settings-textDecimal">
                 <Trans>Hide decimal places</Trans>
+              </label>
+            </Text>
+
+            <Text style={{ display: 'flex' }}>
+              <Checkbox
+                id="settings-abbreviateSidebarBalances"
+                checked={abbreviateSidebarBalances !== false}
+                onChange={e =>
+                  setAbbreviateSidebarBalancesPref(e.currentTarget.checked)
+                }
+              />
+              <label htmlFor="settings-abbreviateSidebarBalances">
+                <Trans>Abbreviate account balances in sidebar</Trans>
               </label>
             </Text>
           </Column>

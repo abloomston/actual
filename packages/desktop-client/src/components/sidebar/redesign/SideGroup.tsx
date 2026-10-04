@@ -8,12 +8,12 @@ import { View } from '@actual-app/components/view';
 import { css } from '@emotion/css';
 
 import { Link } from '#components/common/Link';
+import { SidebarBalance } from '#components/sidebar/SidebarBalance';
 import type { Binding } from '#spreadsheet';
 
 import { CollapseChevron } from './CollapseChevron';
 import { CountPill } from './CountPill';
 import { SidebarAccountGroup } from './SidebarAccountGroup';
-import { SidebarBalance } from './SidebarBalance';
 import { sectionLabelStyle } from './styles';
 import { SyncErrorRollup } from './SyncErrorRollup';
 import type { GroupBucket, SidebarAccountSide } from './useSidebarAccountTree';
