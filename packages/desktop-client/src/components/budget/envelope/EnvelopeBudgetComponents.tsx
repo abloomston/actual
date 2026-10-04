@@ -145,6 +145,7 @@ export const ExpenseGroupMonth = memo(function ExpenseGroupMonth({
   group,
 }: CategoryGroupMonthProps) {
   const { id } = group;
+  const abbreviate = useAbbreviateAmounts('budget');
 
   return (
     <View
@@ -160,6 +161,7 @@ export const ExpenseGroupMonth = memo(function ExpenseGroupMonth({
         name="budgeted"
         width="flex"
         textAlign="right"
+        abbreviate={abbreviate}
         style={{ fontWeight: 600, ...styles.tnum }}
         valueProps={{
           binding: envelopeBudget.groupBudgeted(id),
@@ -170,6 +172,7 @@ export const ExpenseGroupMonth = memo(function ExpenseGroupMonth({
         name="spent"
         width="flex"
         textAlign="right"
+        abbreviate={abbreviate}
         style={{ fontWeight: 600, ...styles.tnum }}
         valueProps={{
           binding: envelopeBudget.groupSumAmount(id),
@@ -180,6 +183,7 @@ export const ExpenseGroupMonth = memo(function ExpenseGroupMonth({
         name="balance"
         width="flex"
         textAlign="right"
+        abbreviate={abbreviate}
         style={{
           fontWeight: 600,
           paddingRight: styles.monthRightPadding,
@@ -557,12 +561,15 @@ type IncomeGroupMonthProps = {
   month: string;
 };
 export function IncomeGroupMonth({ month }: IncomeGroupMonthProps) {
+  const abbreviate = useAbbreviateAmounts('budget');
+
   return (
     <View style={{ flex: 1 }}>
       <EnvelopeSheetCell
         name="received"
         width="flex"
         textAlign="right"
+        abbreviate={abbreviate}
         style={{
           fontWeight: 600,
           paddingRight: styles.monthRightPadding,
