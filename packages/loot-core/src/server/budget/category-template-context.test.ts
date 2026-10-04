@@ -186,6 +186,40 @@ describe('CategoryTemplateContext', () => {
     });
   });
 
+  describe('fixed total amount', () => {
+    it('stops adding to the envelope once its available balance reaches the total', async () => {
+      const category: CategoryEntity = {
+        id: 'test',
+        name: 'Test Category',
+        group: 'test-group',
+        is_income: false,
+      };
+      const template: Template = {
+        type: 'periodic',
+        amount: 100,
+        period: { period: 'month', amount: 1 },
+        starting: '2024-01-01',
+        totalAmount: 150,
+        directive: 'template',
+        priority: 1,
+      };
+      const calculateBudget = async (available: number) => {
+        const instance = new TestCategoryTemplateContext(
+          [template],
+          category,
+          '2024-01',
+          available,
+          0,
+        );
+        return instance.runTemplatesForPriority(1, 100_000, 100_000);
+      };
+
+      expect(await calculateBudget(10_000)).toBe(5_000);
+      expect(await calculateBudget(15_000)).toBe(0);
+      expect(await calculateBudget(12_500)).toBe(2_500);
+    });
+  });
+
   describe('runRefill', () => {
     it('should refill up to the monthly limit', async () => {
       const category: CategoryEntity = {

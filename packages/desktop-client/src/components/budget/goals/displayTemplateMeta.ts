@@ -32,7 +32,9 @@ export function getDisplayTemplateMeta(
     case 'fixed':
       return {
         label: t('Fixed amount'),
-        description: t('Add a set amount every month, week, day, or year.'),
+        description: t(
+          'Add a set amount every month, week, day, or year, with an optional total cap.',
+        ),
         icon: SvgPiggyBank,
       };
     case 'schedule':

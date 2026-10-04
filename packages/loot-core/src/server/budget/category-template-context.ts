@@ -576,6 +576,12 @@ export class CategoryTemplateContext {
       let limitDef;
       if (template.type === 'limit') {
         limitDef = template;
+      } else if (template.type === 'periodic' && template.totalAmount != null) {
+        limitDef = {
+          amount: template.totalAmount,
+          hold: true,
+          period: 'monthly' as const,
+        };
       } else {
         if (template.limit) {
           limitDef = template.limit;

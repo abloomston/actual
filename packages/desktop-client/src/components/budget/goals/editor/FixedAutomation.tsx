@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 
 import { Input } from '@actual-app/components/input';
 import { Select } from '@actual-app/components/select';
@@ -11,6 +11,7 @@ import { updateTemplate } from '#components/budget/goals/actions';
 import type { Action } from '#components/budget/goals/actions';
 import { TWO_UP_FIELD_FLEX } from '#components/budget/goals/editor/fieldLayout';
 import { FormField, FormLabel } from '#components/forms';
+import { LabeledCheckbox } from '#components/forms/LabeledCheckbox';
 import { AmountInput } from '#components/util/AmountInput';
 import { GenericInput } from '#components/util/GenericInput';
 import { useFormat } from '#hooks/useFormat';
@@ -75,65 +76,111 @@ export const FixedAutomation = ({
   };
 
   return (
-    <SpaceBetween align="center" gap={10} style={{ marginTop: 10 }}>
-      <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
-        <FormLabel title={t('Amount')} htmlFor="amount-field" />
-        <AmountInput
-          id="amount-field"
-          value={amount}
-          zeroSign="+"
-          onUpdate={(value: number) =>
-            dispatch(
-              updateTemplate({
-                type: 'periodic',
-                amount: integerToAmount(value, format.currency.decimalPlaces),
-              }),
-            )
-          }
-        />
-      </FormField>
-      <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
-        <FormLabel title={t('Every')} htmlFor="period-amount-field" />
-        <Input
-          id="period-amount-field"
-          type="number"
-          min={1}
-          step={1}
-          value={rawPeriodAmount}
-          onChangeValue={onPeriodAmountChange}
-          onBlur={commitPeriodAmount}
-        />
-      </FormField>
-      <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
-        <FormLabel title={t('Period')} htmlFor="period-unit-field" />
-        <Select
-          id="period-unit-field"
-          value={periodUnit}
-          onChange={value =>
-            dispatch(
-              updateTemplate({
-                type: 'periodic',
-                period: {
-                  period: value,
-                  amount: periodAmount,
-                },
-              }),
-            )
-          }
-          options={periodUnitOptions}
-        />
-      </FormField>
-      <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
-        <FormLabel title={t('Starting')} htmlFor="starting-field" />
-        <GenericInput
-          type="date"
-          field="date"
-          value={template.starting ?? ''}
-          onChange={(value: string) =>
-            dispatch(updateTemplate({ type: 'periodic', starting: value }))
-          }
-        />
-      </FormField>
-    </SpaceBetween>
+    <>
+      <SpaceBetween align="center" gap={10} style={{ marginTop: 10 }}>
+        <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
+          <FormLabel title={t('Amount')} htmlFor="amount-field" />
+          <AmountInput
+            id="amount-field"
+            value={amount}
+            zeroSign="+"
+            onUpdate={(value: number) =>
+              dispatch(
+                updateTemplate({
+                  type: 'periodic',
+                  amount: integerToAmount(value, format.currency.decimalPlaces),
+                }),
+              )
+            }
+          />
+        </FormField>
+        <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
+          <FormLabel title={t('Every')} htmlFor="period-amount-field" />
+          <Input
+            id="period-amount-field"
+            type="number"
+            min={1}
+            step={1}
+            value={rawPeriodAmount}
+            onChangeValue={onPeriodAmountChange}
+            onBlur={commitPeriodAmount}
+          />
+        </FormField>
+        <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
+          <FormLabel title={t('Period')} htmlFor="period-unit-field" />
+          <Select
+            id="period-unit-field"
+            value={periodUnit}
+            onChange={value =>
+              dispatch(
+                updateTemplate({
+                  type: 'periodic',
+                  period: {
+                    period: value,
+                    amount: periodAmount,
+                  },
+                }),
+              )
+            }
+            options={periodUnitOptions}
+          />
+        </FormField>
+        <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
+          <FormLabel title={t('Starting')} htmlFor="starting-field" />
+          <GenericInput
+            type="date"
+            field="date"
+            value={template.starting ?? ''}
+            onChange={(value: string) =>
+              dispatch(updateTemplate({ type: 'periodic', starting: value }))
+            }
+          />
+        </FormField>
+      </SpaceBetween>
+      <SpaceBetween align="center" gap={10} style={{ marginTop: 10 }}>
+        <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
+          <LabeledCheckbox
+            id="fixed-total-amount-field"
+            checked={template.totalAmount != null}
+            onChange={e =>
+              dispatch(
+                updateTemplate({
+                  type: 'periodic',
+                  totalAmount: e.target.checked ? template.amount : undefined,
+                }),
+              )
+            }
+          >
+            <span style={{ marginLeft: 6, fontSize: 12 }}>
+              <Trans>Set a total amount for this envelope</Trans>
+            </span>
+          </LabeledCheckbox>
+        </FormField>
+        {template.totalAmount != null && (
+          <FormField style={{ flex: TWO_UP_FIELD_FLEX }}>
+            <FormLabel title={t('Total amount')} htmlFor="total-amount-field" />
+            <AmountInput
+              id="total-amount-field"
+              value={amountToInteger(
+                template.totalAmount,
+                format.currency.decimalPlaces,
+              )}
+              zeroSign="+"
+              onUpdate={(value: number) =>
+                dispatch(
+                  updateTemplate({
+                    type: 'periodic',
+                    totalAmount: integerToAmount(
+                      value,
+                      format.currency.decimalPlaces,
+                    ),
+                  }),
+                )
+              }
+            />
+          </FormField>
+        )}
+      </SpaceBetween>
+    </>
   );
 };
