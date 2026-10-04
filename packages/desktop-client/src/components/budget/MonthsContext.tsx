@@ -20,6 +20,21 @@ export function getValidMonthBounds(
   };
 }
 
+export function getVisibleBudgetMonths(
+  months: string[],
+  monthsWithTransactions: ReadonlySet<string> | null,
+  hideMonthsWithoutTransactions: boolean,
+  currentMonth: string,
+) {
+  if (!hideMonthsWithoutTransactions || monthsWithTransactions === null) {
+    return months;
+  }
+
+  return months.filter(
+    month => month >= currentMonth || monthsWithTransactions.has(month),
+  );
+}
+
 type MonthsContextProps = {
   months: string[];
   type: string;
@@ -33,6 +48,8 @@ type MonthsProviderProps = {
   monthBounds: MonthBounds;
   type: string;
   children: ReactNode;
+  monthsWithTransactions: ReadonlySet<string> | null;
+  hideMonthsWithoutTransactions: boolean;
 };
 
 export function MonthsProvider({
@@ -41,10 +58,17 @@ export function MonthsProvider({
   monthBounds,
   type,
   children,
+  monthsWithTransactions,
+  hideMonthsWithoutTransactions,
 }: MonthsProviderProps) {
   const endMonth = monthUtils.addMonths(startMonth, numMonths - 1);
   const bounds = getValidMonthBounds(monthBounds, startMonth, endMonth);
-  const months = monthUtils.rangeInclusive(bounds.start, bounds.end);
+  const months = getVisibleBudgetMonths(
+    monthUtils.rangeInclusive(bounds.start, bounds.end),
+    monthsWithTransactions,
+    hideMonthsWithoutTransactions,
+    monthUtils.currentMonth(),
+  );
 
   return (
     <MonthsContext.Provider value={{ months, type }}>

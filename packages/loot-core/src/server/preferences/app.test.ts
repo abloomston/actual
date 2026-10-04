@@ -44,4 +44,20 @@ describe('global amount abbreviation preference', () => {
 
     expect(preferences.abbreviateAmounts).toEqual(['accounts']);
   });
+
+  it('defaults to hiding past budget months without transactions', async () => {
+    const preferences = await runHandler(handlers['load-global-prefs']);
+
+    expect(preferences.hideBudgetMonthsWithNoTransactions).toBe(true);
+  });
+
+  it('saves and loads the budget month visibility preference', async () => {
+    await runHandler(handlers['save-global-prefs'], {
+      hideBudgetMonthsWithNoTransactions: false,
+    });
+
+    const preferences = await runHandler(handlers['load-global-prefs']);
+
+    expect(preferences.hideBudgetMonthsWithNoTransactions).toBe(false);
+  });
 });

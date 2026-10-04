@@ -21,6 +21,7 @@ import { BudgetSummaries } from './BudgetSummaries';
 import { BudgetTotals } from './BudgetTotals';
 import { MonthsProvider } from './MonthsContext';
 import type { MonthBounds } from './MonthsContext';
+import { useBudgetMonthsWithTransactions } from './useBudgetMonthsWithTransactions';
 import {
   findSortDown,
   findSortUp,
@@ -85,6 +86,12 @@ export function BudgetTable(props: BudgetTableProps) {
     'budget.showHiddenCategories',
   );
   const [categoryExpandedStatePref] = useGlobalPref('categoryExpandedState');
+  const [hideMonthsWithoutTransactionsPref] = useGlobalPref(
+    'hideBudgetMonthsWithNoTransactions',
+  );
+  const hideMonthsWithoutTransactions =
+    hideMonthsWithoutTransactionsPref ?? true;
+  const monthsWithTransactions = useBudgetMonthsWithTransactions();
   const categoryExpandedState = categoryExpandedStatePref ?? 0;
   const [editing, setEditing] = useState<{ id: string; cell: string } | null>(
     null,
@@ -278,6 +285,8 @@ export function BudgetTable(props: BudgetTableProps) {
           numMonths={numMonths}
           monthBounds={monthBounds}
           type={type}
+          monthsWithTransactions={monthsWithTransactions}
+          hideMonthsWithoutTransactions={hideMonthsWithoutTransactions}
         >
           <BudgetSummaries />
         </MonthsProvider>
@@ -288,6 +297,8 @@ export function BudgetTable(props: BudgetTableProps) {
         numMonths={numMonths}
         monthBounds={monthBounds}
         type={type}
+        monthsWithTransactions={monthsWithTransactions}
+        hideMonthsWithoutTransactions={hideMonthsWithoutTransactions}
       >
         <BudgetTotals
           toggleHiddenCategories={toggleHiddenCategories}
