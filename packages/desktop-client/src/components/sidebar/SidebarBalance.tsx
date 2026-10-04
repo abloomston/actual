@@ -1,8 +1,8 @@
 import type { CSSProperties } from '@actual-app/components/styles';
 
 import { CellValue, CellValueText } from '#components/spreadsheet/CellValue';
+import { useAbbreviateAmounts } from '#hooks/useAbbreviateAmounts';
 import { useFormat } from '#hooks/useFormat';
-import { useGlobalPref } from '#hooks/useGlobalPref';
 import type { Binding, SheetFields } from '#spreadsheet';
 
 type SidebarBalanceProps<FieldName extends SheetFields<'account'>> = {
@@ -17,9 +17,7 @@ export function SidebarBalance<FieldName extends SheetFields<'account'>>({
   testId,
 }: SidebarBalanceProps<FieldName>) {
   const format = useFormat();
-  const [abbreviateSidebarBalances] = useGlobalPref(
-    'abbreviateSidebarBalances',
-  );
+  const abbreviateBalances = useAbbreviateAmounts('accounts');
 
   return (
     <CellValue<'account', FieldName> binding={binding} type="financial">
@@ -29,7 +27,7 @@ export function SidebarBalance<FieldName extends SheetFields<'account'>>({
           value={value}
           type="financial"
           formatter={amount =>
-            abbreviateSidebarBalances !== false && typeof amount === 'number'
+            abbreviateBalances && typeof amount === 'number'
               ? format.compactCurrency(amount)
               : format(amount, 'financial')
           }

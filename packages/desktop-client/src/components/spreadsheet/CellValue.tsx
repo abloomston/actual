@@ -29,25 +29,41 @@ type CellValueProps<
     type?: FormatType;
     name: string;
     value: Spreadsheets[SheetName][FieldName];
+    abbreviate?: boolean;
   }) => ReactNode;
   binding: Binding<SheetName, FieldName>;
   type?: FormatType;
+  abbreviate?: boolean;
 };
 
 export function CellValue<
   SheetName extends SheetNames,
   FieldName extends SheetFields<SheetName>,
->({ type, binding, children, ...props }: CellValueProps<SheetName, FieldName>) {
+>({
+  type,
+  binding,
+  children,
+  abbreviate,
+  ...props
+}: CellValueProps<SheetName, FieldName>) {
   const { fullSheetName } = useSheetName(binding);
   const sheetValue = useSheetValue(binding);
 
   return typeof children === 'function' ? (
-    <>{children({ type, name: fullSheetName, value: sheetValue })}</>
+    <>
+      {children({
+        type,
+        name: fullSheetName,
+        value: sheetValue,
+        abbreviate,
+      })}
+    </>
   ) : (
     <CellValueText
       type={type}
       name={fullSheetName}
       value={sheetValue}
+      abbreviate={abbreviate}
       {...props}
     />
   );
@@ -67,6 +83,7 @@ type CellValueTextProps<
     value: Spreadsheets[SheetName][FieldName],
     type?: FormatType,
   ) => string;
+  abbreviate?: boolean;
 };
 
 export function CellValueText<
@@ -77,6 +94,7 @@ export function CellValueText<
   name,
   value,
   formatter,
+  abbreviate,
   style,
   ...props
 }: CellValueTextProps<SheetName, FieldName>) {
@@ -104,7 +122,17 @@ export function CellValueText<
         <PrivacyFilter
           activationFilters={[PRIVACY_FILTER_TYPES.includes(type)]}
         >
-          {formatter ? formatter(value, type) : format(value, type)}
+          {formatter
+            ? formatter(value, type)
+            : abbreviate &&
+                typeof value === 'number' &&
+                (type === 'financial' ||
+                  type === 'financial-with-sign' ||
+                  type === 'financial-no-decimals')
+              ? `${
+                  type === 'financial-with-sign' && value >= 0 ? '+' : ''
+                }${format.compactCurrency(value)}`
+              : format(value, type)}
         </PrivacyFilter>
       </FinancialText>
     );
