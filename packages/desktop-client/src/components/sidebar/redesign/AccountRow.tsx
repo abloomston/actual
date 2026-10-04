@@ -13,6 +13,7 @@ import type { AccountEntity } from '@actual-app/core/types/models';
 import { useReopenAccountMutation, useUpdateAccountMutation } from '#accounts';
 import { isAccountFailedSync } from '#accounts/syncStatus';
 import { Link } from '#components/common/Link';
+import { SidebarBalance } from '#components/sidebar/SidebarBalance';
 import { useContextMenu } from '#hooks/useContextMenu';
 import { useUpdatedAccounts } from '#hooks/useUpdatedAccounts';
 import { openAccountCloseModal, pushModal } from '#modals/modalsSlice';
@@ -21,7 +22,6 @@ import * as bindings from '#spreadsheet/bindings';
 import { isTouchDevice } from '#util/isTouchDevice';
 
 import { AccountHoverCard } from './AccountHoverCard';
-import { SidebarBalance } from './SidebarBalance';
 import { SyncDot, useSyncDotLabel } from './SyncDot';
 import type { SyncDotStatus } from './SyncDot';
 

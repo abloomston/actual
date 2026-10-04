@@ -16,6 +16,7 @@ import {
   useDeleteAccountGroupMutation,
   useUpdateAccountGroupMutation,
 } from '#account-groups';
+import { SidebarBalance } from '#components/sidebar/SidebarBalance';
 import { useContextMenu } from '#hooks/useContextMenu';
 import { pushModal } from '#modals/modalsSlice';
 import { useDispatch } from '#redux';
@@ -23,7 +24,6 @@ import * as bindings from '#spreadsheet/bindings';
 
 import { CollapseChevron } from './CollapseChevron';
 import { CountPill } from './CountPill';
-import { SidebarBalance } from './SidebarBalance';
 import { groupLabelStyle } from './styles';
 import { SyncErrorRollup } from './SyncErrorRollup';
 

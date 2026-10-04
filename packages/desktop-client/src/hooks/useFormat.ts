@@ -31,6 +31,7 @@ export type UseFormatResult = {
     value: string,
     defaultValue?: number | null,
   ) => IntegerAmount | null;
+  compactCurrency: (value: IntegerAmount) => string;
   currency: Currency;
 };
 
@@ -138,9 +139,13 @@ export function useFormat(): UseFormatResult {
   }, [numberFormatConfig]);
 
   const applyCurrencyStyling = useCallback(
-    (formattedNumericValue: string, currencySymbol: string): string => {
+    (
+      formattedNumericValue: string,
+      currencySymbol: string,
+      numericSuffix = '',
+    ): string => {
       if (!currencySymbol) {
-        return formattedNumericValue;
+        return formattedNumericValue + numericSuffix;
       }
 
       let sign = '';
@@ -155,8 +160,8 @@ export function useFormat(): UseFormatResult {
 
       const styledAmount =
         position === 'after'
-          ? `${valueWithoutSign}${space}${currencySymbol}`
-          : `\u202A${currencySymbol}\u202C${space}${valueWithoutSign}`;
+          ? `${valueWithoutSign}${numericSuffix}${space}${currencySymbol}`
+          : `\u202A${currencySymbol}\u202C${space}${valueWithoutSign}${numericSuffix}`;
 
       return sign + styledAmount;
     },
@@ -215,6 +220,28 @@ export function useFormat(): UseFormatResult {
       applyCurrencyStyling,
       hideFractionPref,
     ],
+  );
+
+  const compactCurrency = useCallback(
+    (value: IntegerAmount) => {
+      const unitScale = 10 ** activeCurrency.decimalPlaces;
+      const amountPerThousand = unitScale * 1000;
+      const roundedThousands = Math.round(Math.abs(value) / amountPerThousand);
+      const roundedValue = (value < 0 ? -1 : 1) * roundedThousands * unitScale;
+      const intlFormatter = getNumberFormat({
+        format: numberFormatConfig.format,
+        decimalPlaces: 0,
+      }).formatter;
+      const { formattedString } = format(
+        roundedValue,
+        'financial-no-decimals',
+        intlFormatter,
+        activeCurrency.decimalPlaces,
+      );
+
+      return applyCurrencyStyling(formattedString, activeCurrency.symbol, 'k');
+    },
+    [activeCurrency, numberFormatConfig.format, applyCurrencyStyling],
   );
 
   const toAmount = useCallback(
@@ -282,6 +309,7 @@ export function useFormat(): UseFormatResult {
   return Object.assign(formatDisplay, {
     forEdit,
     fromEdit,
+    compactCurrency,
     currency: activeCurrency,
   });
 }

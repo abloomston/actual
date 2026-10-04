@@ -145,6 +145,12 @@ async function saveGlobalPrefs(prefs: GlobalPrefs) {
   if (prefs.showNewsFeed !== undefined) {
     await asyncStorage.setItem('showNewsFeed', prefs.showNewsFeed);
   }
+  if (prefs.abbreviateSidebarBalances !== undefined) {
+    await asyncStorage.setItem(
+      'abbreviate-sidebar-balances',
+      prefs.abbreviateSidebarBalances,
+    );
+  }
   return 'ok';
 }
 
@@ -166,6 +172,7 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
     notifyWhenUpdateIsAvailable,
     lastSeenNewsDate,
     showNewsFeed,
+    'abbreviate-sidebar-balances': abbreviateSidebarBalances,
   } = await asyncStorage.multiGet([
     'floating-sidebar',
     'category-expanded-state',
@@ -183,6 +190,7 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
     'notifyWhenUpdateIsAvailable',
     'lastSeenNewsDate',
     'showNewsFeed',
+    'abbreviate-sidebar-balances',
   ] as const);
   return {
     floatingSidebar: floatingSidebar === 'true',
@@ -213,6 +221,10 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
         : notifyWhenUpdateIsAvailable, // default to true
     lastSeenNewsDate: lastSeenNewsDate || undefined,
     showNewsFeed: showNewsFeed === undefined ? true : showNewsFeed, // default to true
+    abbreviateSidebarBalances:
+      abbreviateSidebarBalances === undefined
+        ? true
+        : abbreviateSidebarBalances,
   };
 }
 
