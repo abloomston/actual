@@ -84,6 +84,12 @@ async function saveGlobalPrefs(prefs: GlobalPrefs) {
   if (prefs.maxMonths !== undefined) {
     await asyncStorage.setItem('max-months', '' + prefs.maxMonths);
   }
+  if (prefs.hideBudgetMonthsWithNoTransactions !== undefined) {
+    await asyncStorage.setItem(
+      'hide-budget-months-with-no-transactions',
+      prefs.hideBudgetMonthsWithNoTransactions,
+    );
+  }
   if (prefs.categoryExpandedState !== undefined) {
     await asyncStorage.setItem(
       'category-expanded-state',
@@ -156,6 +162,8 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
     'floating-sidebar': floatingSidebar,
     'category-expanded-state': categoryExpandedState,
     'max-months': maxMonths,
+    'hide-budget-months-with-no-transactions':
+      hideBudgetMonthsWithNoTransactions,
     'document-dir': documentDir,
     'encrypt-key': encryptKey,
     language,
@@ -175,6 +183,7 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
     'floating-sidebar',
     'category-expanded-state',
     'max-months',
+    'hide-budget-months-with-no-transactions',
     'document-dir',
     'encrypt-key',
     'language',
@@ -195,6 +204,10 @@ async function loadGlobalPrefs(): Promise<GlobalPrefs> {
     floatingSidebar: floatingSidebar === 'true',
     categoryExpandedState: stringToInteger(categoryExpandedState || '') || 0,
     maxMonths: stringToInteger(maxMonths || '') || 1,
+    hideBudgetMonthsWithNoTransactions:
+      hideBudgetMonthsWithNoTransactions === undefined
+        ? true
+        : hideBudgetMonthsWithNoTransactions,
     documentDir: documentDir || getDefaultDocumentDir(),
     keyId: encryptKey && JSON.parse(encryptKey).id,
     language,
