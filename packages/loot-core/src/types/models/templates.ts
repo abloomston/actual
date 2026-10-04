@@ -23,6 +23,7 @@ export type PeriodicTemplate = {
     amount: number;
   };
   starting: string;
+  totalAmount?: number;
   limit?: {
     amount: number;
     hold: boolean;
