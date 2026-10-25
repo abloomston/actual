@@ -36,7 +36,7 @@ describe('default categorization plugin', () => {
         id: DEFAULT_CATEGORIZATION_PLUGIN_ID,
         enabled: true,
         embeddingModel: 'openai/text-embedding-3-small',
-        llmModel: 'google/gemini-2.5-flash-lite',
+        llmModel: 'google/gemini-3.5-flash-lite',
       }),
     ]);
 
