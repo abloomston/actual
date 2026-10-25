@@ -8,7 +8,34 @@ import type { CategorizationCategory } from './embedding';
 import { OPENROUTER_ZDR_PROVIDER_PREFERENCES } from './openrouter';
 import type { OpenRouterChatRequest, OpenRouterPlugin } from './openrouter';
 
-export const DEFAULT_LLM_JUDGE_MODEL = 'google/gemini-2.5-flash-lite';
+/**
+ * Default judge model.
+ *
+ * The judge can only run on a model that still has a Zero Data Retention
+ * endpoint with structured-output support: the built-in transports force
+ * `provider: { zdr: true }` and the documented contract is to fail rather than
+ * fall back to a non-ZDR endpoint. OpenRouter no longer lists any ZDR endpoint
+ * for the Gemini 2.5 Flash family, so the default is Gemini 3.5 Flash Lite,
+ * whose five Google Vertex ZDR endpoints all advertise `response_format` and
+ * `structured_outputs` (live ZDR catalog checked 2026-10-25; see
+ * `OPENROUTER-ZDR.md`).
+ */
+export const DEFAULT_LLM_JUDGE_MODEL = 'google/gemini-3.5-flash-lite';
+
+/**
+ * Default completion budget for the judge.
+ *
+ * Gemini 3.x models always think: OpenRouter reports `reasoning.mandatory: true`
+ * for the default judge, so thinking cannot be turned off or lowered past the
+ * model's default effort. Reasoning tokens are billed as output tokens and
+ * count against the request's completion budget on most providers, so a budget
+ * spent entirely on thinking returns `finish_reason: "length"` with empty
+ * message content, which the judge reports as `LLM judge returned no message
+ * content` instead of a category. 2,000 leaves room for the JSON verdict after
+ * the model's default minimal-effort thinking block; the previous 800 was
+ * sized for a model that could run with thinking off.
+ */
+export const DEFAULT_LLM_JUDGE_MAX_TOKENS = 2000;
 
 export type LlmJudgeReference = {
   categoryId: string;
@@ -46,6 +73,14 @@ export type LlmJudgePluginOptions = {
   llmModel?: string;
   maxTokens?: number;
   promptCacheKey?: string;
+  /**
+   * Opt-in sampling temperature. When this is not a number the judge sends no
+   * `temperature` at all: none of the ZDR endpoints for the default judge model
+   * advertise the parameter, so always sending `temperature: 0` only made the
+   * code look like it asked for greedy determinism, with no guarantee the
+   * gateway honored it. Reproducibility rests on the `strict: true` JSON-schema
+   * response format and the prompt instead.
+   */
   temperature?: number;
 };
 
@@ -196,14 +231,26 @@ function parseJudgeResult(
   return { reasoning, category, confidence };
 }
 
+/**
+ * Builds the outgoing judge request.
+ *
+ * Two parameters are deliberately absent by default:
+ *
+ * - `reasoning`: the model's default thinking level applies. OpenRouter reports
+ *   `default_effort: "minimal"` for the default judge model, which is already
+ *   the cheapest tier, and thinking cannot be disabled on Gemini 3.x
+ *   (`reasoning.mandatory: true` makes `effort: "none"` an invalid request).
+ * - `temperature`: sent only when a host opts in with an explicit number. See
+ *   `LlmJudgePluginOptions.temperature`.
+ */
 function createJudgeRequest(
   model: string,
   promptCacheKey: string,
-  temperature: number,
   maxTokens: number,
   messages: OpenRouterChatRequest['messages'],
+  temperature?: number,
 ): OpenRouterChatRequest {
-  return {
+  const request: OpenRouterChatRequest = {
     model,
     messages,
     maxTokens,
@@ -220,8 +267,15 @@ function createJudgeRequest(
         schema: judgeResponseSchema,
       },
     },
-    temperature,
   };
+
+  // Assigned conditionally so the key is missing from the outgoing body rather
+  // than present with a null or undefined value.
+  if (temperature !== undefined) {
+    request.temperature = temperature;
+  }
+
+  return request;
 }
 
 /**
@@ -236,8 +290,7 @@ export function createLlmJudgePlugin(
   const llmModel = options.llmModel ?? DEFAULT_LLM_JUDGE_MODEL;
   const promptCacheKey =
     options.promptCacheKey ?? `${options.base.id}-llm-judge`;
-  const temperature = options.temperature ?? 0;
-  const maxTokens = options.maxTokens ?? 800;
+  const maxTokens = options.maxTokens ?? DEFAULT_LLM_JUDGE_MAX_TOKENS;
 
   async function judgeTransaction(
     transaction: CategorizationTransaction,
@@ -248,9 +301,9 @@ export function createLlmJudgePlugin(
       createJudgeRequest(
         llmModel,
         promptCacheKey,
-        temperature,
         maxTokens,
         buildLlmJudgeMessages(categories, transaction, references),
+        options.temperature,
       ),
     );
     const content = response.choices[0]?.message.content;

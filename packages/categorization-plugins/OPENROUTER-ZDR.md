@@ -10,6 +10,12 @@ endpoint for it. The live catalog is authoritative:
 
 <https://openrouter.ai/api/v1/endpoints/zdr>
 
+The tables below were regenerated from that catalog on **2026-10-25**, together
+with the model metadata from <https://openrouter.ai/api/v1/models>. Treat them
+as a snapshot: a listed model can lose its ZDR endpoints, and a request pinned
+to ZDR then fails instead of rerouting. Re-check the live catalog before
+changing a default.
+
 ## ZDR Routing
 
 ZDR is an endpoint policy, not a property shared by every provider for a model.
@@ -55,7 +61,7 @@ These embedding model IDs currently have at least one ZDR endpoint:
 | `openai/text-embedding-3-small` | Azure                          |          8,192 | Recommended general-purpose baseline; the project default.                          |
 | `openai/text-embedding-3-large` | Azure                          |          8,192 | Higher-quality OpenAI option with larger vectors and higher cost.                   |
 | `qwen/qwen3-embedding-4b`       | DeepInfra                      |         32,768 | Larger multilingual embedding option.                                               |
-| `qwen/qwen3-embedding-8b`       | DeepInfra, Nebius, SiliconFlow |  32,000–32,768 | Highest-capacity Qwen embedding option in the current ZDR catalog.                  |
+| `qwen/qwen3-embedding-8b`       | DeepInfra, Nebius, SiliconFlow |  32,768–40,960 | Highest-capacity Qwen embedding option in the current ZDR catalog.                  |
 | `baai/bge-m3`                   | DeepInfra, Parasail            |    8,192–8,194 | Multilingual retrieval model.                                                       |
 | `baai/bge-base-en-v1.5`         | DeepInfra                      |            512 | Small English-only model.                                                           |
 | `baai/bge-large-en-v1.5`        | DeepInfra                      |            512 | Larger English-only BGE model.                                                      |
@@ -70,7 +76,10 @@ embedding endpoint catalog when this document was written:
 
 Changing the embedding model changes the vector space. Re-index all historical
 transactions and use a new index path, or allow the plugin's model/version
-metadata filters to isolate the new vectors from older ones.
+metadata filters to isolate the new vectors from older ones. Changing only the
+judge model does not require re-embedding: the vector index is keyed by
+embedding model and `EMBEDDING_VERSION`, and the default embedding model stays
+`openai/text-embedding-3-small`.
 
 To select a model:
 
@@ -99,14 +108,45 @@ for at least one current ZDR endpoint.
 | `openai/gpt-5.4-mini`               | Azure                                                                                       |        400,000 | Lower-cost OpenAI judge.                                     |
 | `openai/gpt-5.4-nano`               | Azure                                                                                       |        400,000 | Lowest-cost/latency OpenAI option for simple categorization. |
 | `openai/gpt-4.1-mini`               | Azure                                                                                       |      1,047,576 | Mature, economical structured-output option.                 |
-| `google/gemini-2.5-flash`           | Google Vertex                                                                               |      1,048,576 | Fast general-purpose judge with a large context window.      |
-| `google/gemini-2.5-flash-lite`      | Google Vertex                                                                               |      1,048,576 | Current project default; cost- and latency-oriented judge.   |
-| `google/gemini-2.5-pro`             | Google Vertex                                                                               |      1,048,576 | Higher-quality Google option for ambiguous transactions.     |
+| `google/gemini-3.5-flash-lite`      | Google Vertex (global, us, eu, flex, priority)                                              |      1,048,576 | Current project default; cost- and latency-oriented judge.   |
+| `google/gemini-3.5-flash`           | Google Vertex (global, us, flex, priority)                                                  |      1,048,576 | Higher-quality Google judge; advertises `temperature`.       |
 | `anthropic/claude-haiku-4.5`        | Amazon Bedrock, Google Vertex                                                               |        200,000 | Fast Anthropic option.                                       |
 | `anthropic/claude-sonnet-4.6`       | Amazon Bedrock, Google Vertex                                                               |      1,000,000 | Higher-quality Anthropic option.                             |
-| `deepseek/deepseek-v3.2`            | DeepInfra, DigitalOcean, Google Vertex, Mara, Novita, Phala, SambaNova, SiliconFlow, Venice | 32,768–163,840 | Cost-effective open-model judge with broad routing.          |
-| `qwen/qwen3-32b`                    | DeepInfra, SiliconFlow                                                                      | 40,960–131,072 | Open-weight judge option.                                    |
-| `meta-llama/llama-3.3-70b-instruct` | AkashML, CoreWeave, DeepInfra, Google Vertex, Groq, Novita, Parasail, SambaNova, Together   | 12,288–131,072 | Open-weight judge with broad provider availability.          |
+| `deepseek/deepseek-v3.2`            | DeepInfra, DigitalOcean, Google Vertex, Mara, Phala, SambaNova, SiliconFlow, Venice         | 32,768–163,840 | Cost-effective open-model judge with broad routing.          |
+| `qwen/qwen3-32b`                    | DeepInfra, SiliconFlow, Tenstorrent                                                         | 20,000–131,072 | Open-weight judge option.                                    |
+| `meta-llama/llama-3.3-70b-instruct` | AkashML, Cloudflare, CoreWeave, DeepInfra, Google Vertex, Groq, Novita, Parasail, SambaNova | 12,288–131,072 | Open-weight judge with broad provider availability.          |
+
+The Gemini 2.5 Flash rows that used to be in this table
+(`google/gemini-2.5-flash`, `google/gemini-2.5-flash-lite` and
+`google/gemini-2.5-pro`) were removed: none of them has a ZDR endpoint in the
+2026-10-25 catalog. The only Gemini 2.5 entries left there are
+`gemini-2.5-flash-image` and `gemini-2.5-pro-preview`, so the 2.5 text models
+are still routable in general but unreachable for a ZDR-pinned judge.
+
+### Gemini 3.x thinking, `temperature`, and the completion budget
+
+Gemini 3.x models always think, and the parameters their ZDR endpoints
+advertise differ from what the models API advertises for the model as a whole:
+
+| Model ID                       | ZDR endpoints (`max_completion_tokens`)                                           | Structured output                                   | `temperature` / `top_p` on the ZDR endpoints | Thinking (`reasoning` metadata)                                                                                     | ZDR price per M in / out                    |
+| ------------------------------ | --------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `google/gemini-3.5-flash-lite` | 5 — Google Vertex `global`, `us`, `eu`, `global/flex`, `global/priority` (65,536) | `response_format` and `structured_outputs` on all 5 | advertised by none of the 5                  | `mandatory: true`, `default_enabled: true`, `default_effort: minimal`, `supported_efforts: high/medium/low/minimal` | $0.15–$0.54 / $1.25–$4.50 (flex → priority) |
+| `google/gemini-3.5-flash`      | 4 — Google Vertex `global`, `us`, `global/flex`, `global/priority` (65,536)       | `response_format` and `structured_outputs` on all 4 | advertised by all 4                          | `mandatory: true`, `default_effort: medium`                                                                         | $0.75–$2.70 / $4.50–$16.20                  |
+
+Three consequences for the judge:
+
+- **Thinking cannot be turned off.** `mandatory: true` means OpenRouter
+  rejects `reasoning: { effort: "none" }`, so the judge sends no `reasoning`
+  field at all and inherits the model default, which for
+  `google/gemini-3.5-flash-lite` is already the cheapest tier (`minimal`).
+- **Reasoning tokens count against `max_tokens`** and are billed at the output
+  rate. A budget that thinking alone consumes returns
+  `finish_reason: "length"` with empty message content, which the judge reports
+  as `LLM judge returned no message content` rather than a category — hence the
+  2,000-token default (`DEFAULT_LLM_JUDGE_MAX_TOKENS`), up from the 800 that was
+  sized for a model that could run with thinking off.
+- **`temperature` is not available under ZDR for the Lite judge.** The judge
+  therefore omits the key entirely by default (see `LlmJudgePluginOptions.temperature`).
 
 The list is intentionally curated rather than exhaustive. The live ZDR catalog
 contains many additional chat models, including newer Qwen, DeepSeek, Mistral,
@@ -122,7 +162,8 @@ To select a judge model:
 const judge = createLlmJudgePlugin({
   base: openRouter,
   categories,
-  llmModel: 'google/gemini-2.5-flash',
+  llmModel: 'google/gemini-3.5-flash-lite',
+  maxTokens: 2000,
 });
 ```
 
@@ -132,17 +173,20 @@ const judge = createLlmJudgePlugin({
 
 ```ts
 embeddingModel: 'openai/text-embedding-3-small';
-llmModel: 'google/gemini-2.5-flash-lite';
+llmModel: 'google/gemini-3.5-flash-lite';
 ```
 
 This is the project default and is a good starting point for ordinary
-English-language transaction categorization.
+English-language transaction categorization. The judge sends no `temperature`
+and no `reasoning` field with this pairing, so the model samples at its own
+defaults and thinks at minimal effort; only the `strict: true` JSON-schema
+response format and the prompt make the output shape reproducible.
 
 ### Multilingual Embeddings
 
 ```ts
 embeddingModel: 'baai/bge-m3';
-llmModel: 'google/gemini-2.5-flash';
+llmModel: 'google/gemini-3.5-flash';
 ```
 
 This is useful when payees, notes, or transaction descriptions contain several
@@ -170,6 +214,8 @@ labs independent.
 ## Sources
 
 - [OpenRouter ZDR Guide](https://openrouter.ai/docs/guides/features/zdr)
+- [OpenRouter Models API](https://openrouter.ai/api/v1/models)
+- [OpenRouter Reasoning Tokens](https://openrouter.ai/docs/use-cases/reasoning-tokens)
 - [OpenRouter Live ZDR Endpoint Catalog](https://openrouter.ai/api/v1/endpoints/zdr)
 - [OpenRouter Provider Routing](https://openrouter.ai/docs/guides/routing/provider-selection)
 - [OpenRouter Embeddings API](https://openrouter.ai/docs/api/api-reference/embeddings/submit-an-embedding-request)

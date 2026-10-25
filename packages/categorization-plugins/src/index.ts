@@ -24,6 +24,7 @@ export {
 export {
   buildLlmJudgeMessages,
   createLlmJudgePlugin,
+  DEFAULT_LLM_JUDGE_MAX_TOKENS,
   DEFAULT_LLM_JUDGE_MODEL,
   type LlmJudgeCategoriesSource,
   type LlmJudgePlugin,
