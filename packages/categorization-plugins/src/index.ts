@@ -45,3 +45,19 @@ export {
   type OpenRouterZdrProviderPreferences,
   type OpenRouterPluginOptions,
 } from './openrouter';
+export {
+  createOpenRouterLogger,
+  DEFAULT_OPENROUTER_LOG_FILE,
+  DEFAULT_OPENROUTER_LOG_MAX_BYTES,
+  describeError,
+  OPENROUTER_LOG_CONTENT_ENV_VAR,
+  OPENROUTER_LOG_FILE_ENV_VAR,
+  resolveOpenRouterLogFile,
+  type OpenRouterCallLog,
+  type OpenRouterLogEntry,
+  type OpenRouterLogFields,
+  type OpenRouterLogKind,
+  type OpenRouterLogLevel,
+  type OpenRouterLogger,
+  type OpenRouterLoggerOptions,
+} from './openrouter-log';

@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { CategorizationTransaction } from '@actual-app/core/server/transactions/categorization-plugins';
 import { OpenRouter } from '@openrouter/sdk';
 import type { ChatResult } from '@openrouter/sdk/models';
@@ -8,6 +12,7 @@ import {
   createOpenRouterPlugin,
   DEFAULT_LLM_JUDGE_MAX_TOKENS,
   DEFAULT_LLM_JUDGE_MODEL,
+  OPENROUTER_LOG_FILE_ENV_VAR,
 } from './index';
 import type {
   CategorizationCategory,
@@ -15,6 +20,10 @@ import type {
   OpenRouterChatRequest,
   OpenRouterChatTransport,
 } from './index';
+
+// Judge tests inject their own transports; keep the default /tmp log clean and
+// let the one logging test point the logger at a fixture file.
+process.env[OPENROUTER_LOG_FILE_ENV_VAR] = 'off';
 
 const categories: CategorizationCategory[] = [
   { id: 'dining', name: 'Dining', group: 'Expenses' },
@@ -264,7 +273,7 @@ describe('LLM judge categorization plugin', () => {
       ],
     } satisfies ChatResult);
     const plugin = createLlmJudgePlugin({
-      base: createOpenRouterPlugin({ openRouter }),
+      base: createOpenRouterPlugin({ logFile: false, openRouter }),
       categories,
     });
 
@@ -310,5 +319,55 @@ describe('LLM judge categorization plugin', () => {
     await expect(plugin.judgeTransaction(transaction)).rejects.toThrow(
       'invalid categorization result',
     );
+  });
+
+  it('logs why a successful request produced no category', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'actual-llm-judge-log-'));
+    const logFile = join(dir, 'openrouter.log');
+    const bases: OpenRouterChatTransport[] = [
+      // Thinking ate the completion budget: content comes back empty.
+      async () => ({ choices: [{ message: { content: '' } }] }),
+      // The model ignored the response format.
+      async () => ({ choices: [{ message: { content: 'not json' } }] }),
+    ];
+
+    for (const transport of bases) {
+      const base = createOpenRouterPlugin({ logFile, transport });
+      const plugin = createLlmJudgePlugin({ base, categories });
+      await expect(
+        plugin.judgeTransaction(transaction, [reference]),
+      ).rejects.toThrow();
+    }
+
+    const contents = await readFile(logFile, 'utf8');
+    const entries = contents
+      .split('\n')
+      .filter(line => line.trim() !== '')
+      .map(line => JSON.parse(line) as Record<string, unknown>);
+    const failures = entries.filter(entry => entry.event === 'judge.error');
+
+    expect(failures).toHaveLength(2);
+    expect(failures[0]).toMatchObject({
+      level: 'error',
+      pluginId: 'actual-openrouter-base-llm-judge',
+      model: DEFAULT_LLM_JUDGE_MODEL,
+      transactionId: 'transaction-id',
+      referenceCount: 1,
+      categoryCount: 2,
+      maxTokens: DEFAULT_LLM_JUDGE_MAX_TOKENS,
+      contentChars: 0,
+      error: { message: 'LLM judge returned no message content' },
+    });
+    expect(failures[1]).toMatchObject({
+      contentChars: 8,
+      error: { message: 'LLM judge returned invalid JSON' },
+    });
+    // Plugin construction stays quiet when the env var opts out of the default
+    // log and the caller supplies a path explicitly.
+    expect(entries.filter(entry => entry.event === 'plugin.init')).toHaveLength(
+      2,
+    );
+
+    await rm(dir, { recursive: true, force: true });
   });
 });

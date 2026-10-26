@@ -8,12 +8,17 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createEmbeddingPlugin,
   createOpenRouterPlugin,
+  OPENROUTER_LOG_FILE_ENV_VAR,
   serializeTransactionForEmbedding,
 } from './index';
 import type {
   CategorizationCategory,
   OpenRouterEmbeddingTransport,
 } from './index';
+
+// These tests cover embedding storage, not the OpenRouter transport; keep their
+// plugin-init diagnostics out of the real /tmp log.
+process.env[OPENROUTER_LOG_FILE_ENV_VAR] = 'off';
 
 function makeTransaction(
   overrides: Partial<CategorizationTransaction> = {},
