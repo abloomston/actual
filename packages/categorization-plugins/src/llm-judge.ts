@@ -7,6 +7,7 @@ import type { ChatRequest } from '@openrouter/sdk/models';
 import type { CategorizationCategory } from './embedding';
 import { OPENROUTER_ZDR_PROVIDER_PREFERENCES } from './openrouter';
 import type { OpenRouterChatRequest, OpenRouterPlugin } from './openrouter';
+import { describeError } from './openrouter-log';
 
 /**
  * Default judge model.
@@ -288,6 +289,7 @@ export function createLlmJudgePlugin(
   options: LlmJudgePluginOptions,
 ): LlmJudgePlugin {
   const llmModel = options.llmModel ?? DEFAULT_LLM_JUDGE_MODEL;
+  const pluginId = options.id ?? `${options.base.id}-llm-judge`;
   const promptCacheKey =
     options.promptCacheKey ?? `${options.base.id}-llm-judge`;
   const maxTokens = options.maxTokens ?? DEFAULT_LLM_JUDGE_MAX_TOKENS;
@@ -306,16 +308,41 @@ export function createLlmJudgePlugin(
         options.temperature,
       ),
     );
+
+    // Transport failures already have their own log line; this one records the
+    // ways a request can succeed on the wire and still produce no category,
+    // which is what the caller actually sees as an error.
     const content = response.choices[0]?.message.content;
-    if (!content) {
-      throw new Error('LLM judge returned no message content');
+    try {
+      if (!content) {
+        throw new Error('LLM judge returned no message content');
+      }
+      return parseJudgeResult(content, categories);
+    } catch (error) {
+      options.base.log.log(
+        'judge.error',
+        {
+          pluginId,
+          model: llmModel,
+          transactionId: transaction.id,
+          referenceCount: references.length,
+          categoryCount: categories.length,
+          maxTokens,
+          contentChars: content?.length ?? 0,
+          // Only the length is known to be wrong here; the body stays out of
+          // the log unless content logging is on.
+          contentPreview: options.base.log.preview(content ?? ''),
+          error: describeError(error),
+        },
+        'error',
+      );
+      throw error;
     }
-    return parseJudgeResult(content, categories);
   }
 
   return {
     ...options.base,
-    id: options.id ?? `${options.base.id}-llm-judge`,
+    id: pluginId,
     enabled: options.enabled ?? options.base.enabled ?? true,
     llmModel,
     getCategories: async () => resolveCategories(options.categories),

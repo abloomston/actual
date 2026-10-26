@@ -4,6 +4,7 @@ import {
   createEmbeddingLlmJudgePlugin,
   createEmbeddingPlugin,
   createLlmJudgePlugin,
+  createOpenRouterLogger,
   createOpenRouterPlugin,
 } from '@actual-app/categorization-plugins';
 import type { CategorizationCategory } from '@actual-app/categorization-plugins';
@@ -32,6 +33,19 @@ export function registerDefaultCategorizationPlugin(
   options: DefaultCategorizationPluginOptions,
 ): (() => void) | null {
   if (!process.env.ACTUAL__OPENROUTER_API_KEY) {
+    // Recorded in the same temp log as the calls themselves: without it, a host
+    // that never registered the plugin looks identical to a plugin whose
+    // requests all failed — an empty log and an opaque
+    // "No enabled categorization plugins are registered" from the MCP tool.
+    createOpenRouterLogger().log(
+      'plugin.skipped',
+      {
+        pluginId: DEFAULT_CATEGORIZATION_PLUGIN_ID,
+        hasApiKey: false,
+        reason: 'ACTUAL__OPENROUTER_API_KEY is not set',
+      },
+      'warn',
+    );
     return null;
   }
 

@@ -11,6 +11,7 @@ import {
   createLlmJudgePlugin,
   createOpenRouterPlugin,
   DEFAULT_NEAREST_TRANSACTIONS_PER_CATEGORY,
+  OPENROUTER_LOG_FILE_ENV_VAR,
 } from './index';
 import type {
   CategorizationCategory,
@@ -18,6 +19,9 @@ import type {
   OpenRouterChatTransport,
   OpenRouterEmbeddingTransport,
 } from './index';
+
+// Composition tests only: keep plugin-init diagnostics out of the real /tmp log.
+process.env[OPENROUTER_LOG_FILE_ENV_VAR] = 'off';
 
 const categories: CategorizationCategory[] = [
   { id: 'dining', name: 'Dining', group: 'Expenses' },

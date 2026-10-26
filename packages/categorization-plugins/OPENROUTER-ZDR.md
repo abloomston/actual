@@ -52,6 +52,59 @@ export ACTUAL__OPENROUTER_API_KEY="..."
 The name intentionally has two underscores after `ACTUAL` and no underscore
 between `OPEN` and `ROUTER`.
 
+## Call Log
+
+Every request the built-in SDK transports make is appended to a named log file
+so a judge call that returns nothing, or never happens, can be explained after
+the fact. This covers the traffic the MCP server generates through the Node API.
+
+```bash
+tail -f /tmp/actual-openrouter.log
+```
+
+One JSON object per line (`JSONL`). Relevant fields:
+
+| Event                                 | Written when                                         | Notable fields                                                                                                                                         |
+| ------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `plugin.init`                         | the OpenRouter plugin is built                       | `hasApiKey`, `apiKeySource`, `chatTransport`/`embeddingTransport` (`openrouter-sdk` vs `custom`), `logFile`, `logContent`                              |
+| `plugin.skipped`                      | the Node API default plugin is not registered        | `reason` (missing `ACTUAL__OPENROUTER_API_KEY`)                                                                                                        |
+| `chat.request`, `embedding.request`   | a call leaves the plugin                             | `model`, `zdr`, `maxTokens`, `responseFormatType`, `promptCacheKey`, `messageCount`, `promptChars`                                                     |
+| `chat.response`, `embedding.response` | the call returns                                     | `finishReason`, `contentChars`, `reasoningChars`, `usage` (prompt/completion/reasoning/cached tokens, cost), `routing` (provider, attempts, endpoints) |
+| `chat.error`, `embedding.error`       | the call throws                                      | `error.name`, `error.message`, `error.statusCode`, `error.responseBody`                                                                                |
+| `judge.error`                         | the request succeeded but produced no usable verdict | `contentChars`, `error.message` (no message content, invalid JSON, unknown category ID)                                                                |
+
+A `chat.request` and the line that settles it share a `callId`; `durationMs` is
+measured between them.
+
+Two environment variables control the log:
+
+```bash
+# Where to write. `off` (or an empty value) disables file logging entirely.
+export ACTUAL__OPENROUTER_LOG_FILE=/tmp/actual-openrouter.log
+# Opt in to request/response payload previews. Off by default: prompts contain
+# payees, notes and raw synced data, and /tmp is readable by local processes.
+export ACTUAL__OPENROUTER_LOG_CONTENT=1
+```
+
+The log rotates once to `<file>.1` when a line would push it past 2 MiB, API-key
+shaped strings are redacted even inside error bodies, the file is created
+owner-read/write only (`0600`), and logging failures never interrupt
+categorization. `createOpenRouterPlugin` also accepts `logFile` (a path, or
+`false`) and `logContent` for hosts that configure it in code.
+
+Reading the common failures:
+
+- No `plugin.init` line at all, or a `plugin.skipped` line: the plugin was never
+  registered because `ACTUAL__OPENROUTER_API_KEY` is not set in the process that
+  runs the MCP server.
+- `chat.error` with `statusCode: 404` and a body about endpoints: the model has
+  no Zero Data Retention endpoint, so the ZDR pin rejected the request.
+- `chat.response` with `finishReason: "length"`, `contentChars: 0` and a
+  `usage.reasoningTokens` close to `maxTokens`: thinking consumed the completion
+  budget; raise `maxTokens`.
+- `judge.error` after a successful `chat.response`: the model answered, but not
+  with a usable verdict.
+
 ## Embedding Models
 
 These embedding model IDs currently have at least one ZDR endpoint:
