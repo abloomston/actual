@@ -296,7 +296,12 @@ function invalidToken(res) {
 }
 
 function serverDown(e, res) {
-  console.log(e);
+  if (e instanceof SimpleFinUpstreamError) {
+    // Expected upstream failures: a single line is enough, no stack trace.
+    console.log(e.message);
+  } else {
+    console.log(e);
+  }
   res.send({
     status: 'ok',
     data: {
@@ -396,6 +401,246 @@ function normalizeDate(date) {
   return (date.valueOf() - date.getTimezoneOffset() * 60 * 1000) / 1000;
 }
 
+// A transient upstream failure is safe to try again: timeouts, rate limits and
+// anything 5xx - which includes the Cloudflare-only statuses (520-527) that the
+// CDN in front of the hosted bridge serves as an HTML error page whenever a
+// bank connection behind it stalls.
+const RETRY_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 250;
+const RETRY_MAX_DELAY_MS = 4000;
+// The app waits 60s for a single-account sync (5 min for a batch), so one
+// bridge call must not spend the whole window retrying.
+const RETRY_BUDGET_MS = 45000;
+// A bridge asking for a longer pause than this is not worth waiting out.
+const RETRY_MAX_AFTER_MS = 15000;
+const BODY_SNIPPET_LIMIT = 200;
+const REQUEST_DESCRIPTION = 'accounts request';
+
+// Raised instead of a JSON.parse SyntaxError when the bridge answers with
+// something Actual cannot use: a Cloudflare error page, an empty 200, a JSON
+// payload of the wrong shape, or a connection that never completed.
+class SimpleFinUpstreamError extends Error {
+  constructor(message, { status, retryable, retryAfterMs = null }) {
+    super(message);
+    this.name = 'SimpleFinUpstreamError';
+    this.status = status;
+    this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function truncate(value, limit) {
+  return value.length > limit ? `${value.slice(0, limit)}...` : value;
+}
+
+function isPlainObject(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// A description of the body fit for one log line: whitespace collapsed and
+// clipped, so a whole HTML error page never lands in the server logs.
+function describeBody(text, contentType) {
+  const snippet = (text ?? '').replace(/\s+/g, ' ').trim();
+  const parts = [];
+  if (contentType) {
+    parts.push(`content-type ${contentType}`);
+  }
+  parts.push(
+    snippet === ''
+      ? 'empty body'
+      : `body ${truncate(snippet, BODY_SNIPPET_LIMIT)}`,
+  );
+  return parts.join(', ');
+}
+
+function isJsonContentType(contentType) {
+  const type = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  // Self-hosted bridges sometimes omit the header; treat unknown as JSON and
+  // let the parse attempt decide.
+  if (type === '') {
+    return true;
+  }
+  return (
+    type === 'application/json' ||
+    type.endsWith('/json') ||
+    type.endsWith('+json')
+  );
+}
+
+function parseRetryAfterMs(response) {
+  const header = response.headers.get('retry-after');
+  if (!header) {
+    return null;
+  }
+
+  const seconds = Number(header);
+  const delay = Number.isFinite(seconds)
+    ? seconds * 1000
+    : Date.parse(header) - Date.now();
+  if (!Number.isFinite(delay) || delay <= 0) {
+    return null;
+  }
+  return Math.min(delay, RETRY_MAX_AFTER_MS);
+}
+
+function retryDelayMs(error, attempt) {
+  if (error.retryAfterMs != null) {
+    return error.retryAfterMs;
+  }
+
+  const backoff = Math.min(
+    RETRY_BASE_DELAY_MS * 2 ** (attempt - 2),
+    RETRY_MAX_DELAY_MS,
+  );
+  // Jittered so syncs running against the same bridge don't retry in lockstep.
+  return Math.round(backoff / 2 + Math.random() * (backoff / 2));
+}
+
+// Runs one bridge call, retrying transient upstream failures with jittered
+// exponential backoff. The whole sequence is bounded by both RETRY_ATTEMPTS and
+// RETRY_BUDGET_MS so a stalled bridge cannot push a sync past the app's timeout.
+async function withUpstreamRetry(request) {
+  const startedAt = Date.now();
+
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await request();
+    } catch (error) {
+      if (!(error instanceof SimpleFinUpstreamError) || !error.retryable) {
+        throw error;
+      }
+
+      const nextAttempt = attempt + 1;
+      const delay = retryDelayMs(error, nextAttempt);
+      if (nextAttempt > RETRY_ATTEMPTS) {
+        console.log(
+          `Giving up on SimpleFIN after ${attempt} attempts: ${error.message}`,
+        );
+        throw error;
+      }
+      if (Date.now() - startedAt + delay > RETRY_BUDGET_MS) {
+        console.log(
+          `Giving up on SimpleFIN after ${attempt} attempts (retry budget exhausted): ${error.message}`,
+        );
+        throw error;
+      }
+
+      console.log(
+        `Retrying SimpleFIN request in ${delay}ms (attempt ${nextAttempt}/${RETRY_ATTEMPTS}): ${error.message}`,
+      );
+      await sleep(delay);
+    }
+  }
+}
+
+// Read the bridge response as JSON, classifying anything unusable as a
+// SimpleFinUpstreamError rather than letting JSON.parse throw a SyntaxError.
+async function parseAccountsResponse(response) {
+  const contentType = response.headers.get('content-type') ?? '';
+  const text = await response.text();
+
+  let parsed;
+  let isJson = false;
+  if (response.ok && isJsonContentType(contentType)) {
+    try {
+      parsed = JSON.parse(text);
+      isJson = true;
+    } catch {
+      // Reported through the shared classification below.
+    }
+
+    if (isJson && isPlainObject(parsed)) {
+      return {
+        ...parsed,
+        sferrors: Array.isArray(parsed.errors) ? parsed.errors : [],
+        hasError: false,
+        errors: {},
+      };
+    }
+  }
+
+  const reason = !response.ok
+    ? `failed with HTTP ${response.status}`
+    : isJson
+      ? 'returned an unexpected JSON response'
+      : 'returned a non-JSON response';
+
+  throw new SimpleFinUpstreamError(
+    `SimpleFIN ${REQUEST_DESCRIPTION} ${reason} (${describeBody(text, contentType)})`,
+    {
+      status: response.status,
+      // A 2xx body Actual cannot use is treated as a glitch; an HTTP error is
+      // only retried when its status says the upstream is temporarily broken.
+      retryable: response.ok || isRetryableStatus(response.status),
+      retryAfterMs: parseRetryAfterMs(response),
+    },
+  );
+}
+
+function errorDetail(error) {
+  const cause = error?.cause?.message;
+  return cause ? `${error.message}: ${cause}` : String(error?.message ?? error);
+}
+
+async function fetchAccounts(url, sfin) {
+  // Built per attempt: Authorization is dropped below when a redirect leaves
+  // the original origin, and that must not leak into the next retry.
+  const headers = {
+    Authorization: `Basic ${Buffer.from(
+      `${sfin.username}:${sfin.password}`,
+    ).toString('base64')}`,
+  };
+
+  // Follow redirects manually so every hop is re-validated against the SSRF
+  // rules; fetch's automatic 'follow' would let a 3xx response redirect to a
+  // blocked address after only the initial URL was checked. Authorization is
+  // dropped once a redirect leaves the original origin (matching fetch's
+  // default cross-origin stripping) so the bridge credentials aren't leaked.
+  const MAX_REDIRECTS = 5;
+  let currentUrl = url;
+  let response;
+  for (let hop = 0; ; hop++) {
+    await assertUrlAllowed(currentUrl, { allowPrivateNetwork: true });
+
+    try {
+      response = await fetch(currentUrl, {
+        method: 'GET',
+        headers,
+        redirect: 'manual',
+      });
+    } catch (error) {
+      throw new SimpleFinUpstreamError(
+        `SimpleFIN ${REQUEST_DESCRIPTION} could not reach the bridge (${errorDetail(error)})`,
+        { status: 0, retryable: true },
+      );
+    }
+
+    const location = response.headers.get('location');
+    if (response.status < 300 || response.status >= 400 || !location) {
+      break;
+    }
+    if (hop >= MAX_REDIRECTS) {
+      throw new Error('Too many redirects');
+    }
+
+    const nextUrl = new URL(location, currentUrl);
+    if (nextUrl.origin !== new URL(currentUrl).origin) {
+      delete headers.Authorization;
+    }
+    currentUrl = nextUrl.toString();
+  }
+
+  return response;
+}
+
 async function getAccounts(
   accessKey,
   accounts,
@@ -404,12 +649,6 @@ async function getAccounts(
   noTransactions = false,
 ) {
   const sfin = parseAccessKey(accessKey);
-
-  const headers = {
-    Authorization: `Basic ${Buffer.from(
-      `${sfin.username}:${sfin.password}`,
-    ).toString('base64')}`,
-  };
 
   const params = new URLSearchParams();
   if (!noTransactions) {
@@ -433,51 +672,15 @@ async function getAccounts(
   const url = new URL(`${sfin.baseUrl}/accounts`);
   url.search = params.toString();
 
-  // Follow redirects manually so every hop is re-validated against the SSRF
-  // rules; fetch's automatic 'follow' would let a 3xx response redirect to a
-  // blocked address after only the initial URL was checked. Authorization is
-  // dropped once a redirect leaves the original origin (matching fetch's
-  // default cross-origin stripping) so the bridge credentials aren't leaked.
-  const MAX_REDIRECTS = 5;
-  let currentUrl = url.toString();
-  let response;
-  for (let hop = 0; ; hop++) {
-    await assertUrlAllowed(currentUrl, { allowPrivateNetwork: true });
+  return await withUpstreamRetry(async () => {
+    const response = await fetchAccounts(url.toString(), sfin);
 
-    response = await fetch(currentUrl, {
-      method: 'GET',
-      headers,
-      redirect: 'manual',
-    });
-
-    const location = response.headers.get('location');
-    if (response.status < 300 || response.status >= 400 || !location) {
-      break;
-    }
-    if (hop >= MAX_REDIRECTS) {
-      throw new Error('Too many redirects');
+    if (response.status === 403) {
+      // Thrown as a plain Error: a rejected credential is not worth retrying,
+      // and callers look for this message to report an invalid token.
+      throw new Error('Forbidden');
     }
 
-    const nextUrl = new URL(location, currentUrl);
-    if (nextUrl.origin !== new URL(currentUrl).origin) {
-      delete headers.Authorization;
-    }
-    currentUrl = nextUrl.toString();
-  }
-
-  if (response.status === 403) {
-    throw new Error('Forbidden');
-  }
-
-  const text = await response.text();
-  try {
-    const results = JSON.parse(text);
-    results.sferrors = results.errors;
-    results.hasError = false;
-    results.errors = {};
-    return results;
-  } catch (e) {
-    console.log(`Error parsing JSON response: ${text}`);
-    throw e;
-  }
+    return await parseAccountsResponse(response);
+  });
 }
