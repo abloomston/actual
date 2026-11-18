@@ -295,15 +295,42 @@ function invalidToken(res) {
   });
 }
 
+/**
+ * Maps an upstream failure onto the error payload the app turns into a
+ * user-facing message. A redirect loop gets its own error type and names the
+ * host that is looping, so the difference between "the bridge is flapping" and
+ * "the bridge is down" survives all the way to the account screen.
+ */
+function upstreamFailure(e) {
+  if (e instanceof TooManyRedirectsError) {
+    return {
+      error_type: TOO_MANY_REDIRECTS,
+      error_code: TOO_MANY_REDIRECTS,
+      reason: `The SimpleFIN bridge at ${e.host} kept redirecting instead of answering. This is usually temporary - try syncing again in a few minutes, and check the bridge configuration if it keeps happening.`,
+    };
+  }
+
+  return {
+    error_type: 'SERVER_DOWN',
+    error_code: 'SERVER_DOWN',
+    reason: 'There was an error communicating with SimpleFIN.',
+  };
+}
+
 function serverDown(e, res) {
-  console.log(e);
+  if (e instanceof TooManyRedirectsError) {
+    // An expected upstream failure with a message that already says everything:
+    // log one line instead of a stack trace that points at our own fetch loop.
+    console.log(e.message);
+  } else {
+    console.log(e);
+  }
+
   res.send({
     status: 'ok',
     data: {
-      error_type: 'SERVER_DOWN',
-      error_code: 'SERVER_DOWN',
+      ...upstreamFailure(e),
       status: 'rejected',
-      reason: 'There was an error communicating with SimpleFIN.',
     },
   });
 }
@@ -396,6 +423,115 @@ function normalizeDate(date) {
   return (date.valueOf() - date.getTimezoneOffset() * 60 * 1000) / 1000;
 }
 
+// Hops allowed before a bridge is declared to be looping, and how many times a
+// looping request is retried before the failure is reported. A loop is almost
+// always the bridge (or the reverse proxy in front of it) flapping rather than
+// anything the user can fix, so it is treated as a retryable upstream failure.
+const MAX_REDIRECTS = 5;
+const REDIRECT_RETRY_ATTEMPTS = 3;
+const REDIRECT_RETRY_BASE_DELAY_MS = 250;
+const REDIRECT_RETRY_MAX_DELAY_MS = 1000;
+const TOO_MANY_REDIRECTS = 'TOO_MANY_REDIRECTS';
+
+class TooManyRedirectsError extends Error {
+  constructor(host, maxRedirects, lastLocation) {
+    super(
+      `SimpleFIN bridge at ${host} redirected ${maxRedirects} times without answering (last redirect to ${lastLocation})`,
+    );
+    this.name = 'TooManyRedirectsError';
+    this.host = host;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function redirectRetryDelayMs(attempt) {
+  const backoff = Math.min(
+    REDIRECT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 2),
+    REDIRECT_RETRY_MAX_DELAY_MS,
+  );
+  // Jittered so syncs running against the same bridge don't retry in lockstep.
+  return Math.round(backoff / 2 + Math.random() * (backoff / 2));
+}
+
+// One GET against the bridge, following redirects by hand so every hop is
+// re-validated against the SSRF rules; fetch's automatic 'follow' would let a
+// 3xx response redirect to a blocked address after only the initial URL was
+// checked. Authorization is dropped once a redirect leaves the original origin
+// (matching fetch's default cross-origin stripping) so the bridge credentials
+// aren't leaked.
+async function fetchFollowingRedirects(startUrl, sfin) {
+  // Built per attempt: the Authorization header is deleted below when a
+  // redirect leaves the original origin, and that must not leak into a retry.
+  const headers = {
+    Authorization: `Basic ${Buffer.from(
+      `${sfin.username}:${sfin.password}`,
+    ).toString('base64')}`,
+  };
+
+  let currentUrl = startUrl;
+  for (let hop = 0; ; hop++) {
+    await assertUrlAllowed(currentUrl, { allowPrivateNetwork: true });
+
+    const response = await fetch(currentUrl, {
+      method: 'GET',
+      headers,
+      redirect: 'manual',
+    });
+
+    const location = response.headers.get('location');
+    if (response.status < 300 || response.status >= 400 || !location) {
+      return response;
+    }
+
+    const nextUrl = new URL(location, currentUrl);
+    if (hop >= MAX_REDIRECTS) {
+      throw new TooManyRedirectsError(
+        new URL(currentUrl).host,
+        MAX_REDIRECTS,
+        `${nextUrl.origin}${nextUrl.pathname}`,
+      );
+    }
+
+    if (nextUrl.origin !== new URL(currentUrl).origin) {
+      delete headers.Authorization;
+    }
+    currentUrl = nextUrl.toString();
+  }
+}
+
+// Runs one bridge request, retrying a redirect loop with jittered exponential
+// backoff. Bounded both by REDIRECT_RETRY_ATTEMPTS and, since every attempt is
+// itself capped at MAX_REDIRECTS hops, keeps a looping bridge from stalling a
+// sync past the timeout the app waits for.
+async function requestAccounts(startUrl, sfin) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetchFollowingRedirects(startUrl, sfin);
+    } catch (error) {
+      if (!(error instanceof TooManyRedirectsError)) {
+        throw error;
+      }
+
+      const nextAttempt = attempt + 1;
+      if (nextAttempt > REDIRECT_RETRY_ATTEMPTS) {
+        console.log(
+          `Giving up on SimpleFIN after ${attempt} attempts: ${error.message}`,
+        );
+        throw error;
+      }
+
+      const delay = redirectRetryDelayMs(nextAttempt);
+      console.log(
+        `Retrying SimpleFIN request in ${delay}ms (attempt ${nextAttempt}/${REDIRECT_RETRY_ATTEMPTS}): ${error.message}`,
+      );
+      await sleep(delay);
+    }
+  }
+}
+
 async function getAccounts(
   accessKey,
   accounts,
@@ -404,12 +540,6 @@ async function getAccounts(
   noTransactions = false,
 ) {
   const sfin = parseAccessKey(accessKey);
-
-  const headers = {
-    Authorization: `Basic ${Buffer.from(
-      `${sfin.username}:${sfin.password}`,
-    ).toString('base64')}`,
-  };
 
   const params = new URLSearchParams();
   if (!noTransactions) {
@@ -433,37 +563,7 @@ async function getAccounts(
   const url = new URL(`${sfin.baseUrl}/accounts`);
   url.search = params.toString();
 
-  // Follow redirects manually so every hop is re-validated against the SSRF
-  // rules; fetch's automatic 'follow' would let a 3xx response redirect to a
-  // blocked address after only the initial URL was checked. Authorization is
-  // dropped once a redirect leaves the original origin (matching fetch's
-  // default cross-origin stripping) so the bridge credentials aren't leaked.
-  const MAX_REDIRECTS = 5;
-  let currentUrl = url.toString();
-  let response;
-  for (let hop = 0; ; hop++) {
-    await assertUrlAllowed(currentUrl, { allowPrivateNetwork: true });
-
-    response = await fetch(currentUrl, {
-      method: 'GET',
-      headers,
-      redirect: 'manual',
-    });
-
-    const location = response.headers.get('location');
-    if (response.status < 300 || response.status >= 400 || !location) {
-      break;
-    }
-    if (hop >= MAX_REDIRECTS) {
-      throw new Error('Too many redirects');
-    }
-
-    const nextUrl = new URL(location, currentUrl);
-    if (nextUrl.origin !== new URL(currentUrl).origin) {
-      delete headers.Authorization;
-    }
-    currentUrl = nextUrl.toString();
-  }
+  const response = await requestAccounts(url.toString(), sfin);
 
   if (response.status === 403) {
     throw new Error('Forbidden');

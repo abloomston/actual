@@ -24,6 +24,47 @@ const statusResponse = (status, body = '') => ({
 
 const okResponse = body => statusResponse(200, body);
 
+// A looping bridge answers with another redirect rather than a body.
+const redirectResponse = (location, status = 302) => ({
+  ok: false,
+  status,
+  headers: {
+    get: name => (name.toLowerCase() === 'location' ? location : null),
+  },
+  text: () => Promise.resolve(''),
+});
+
+// One pass over a redirect loop costs MAX_REDIRECTS (5) followed hops plus the
+// hop that gives up, and each pass is retried REDIRECT_RETRY_ATTEMPTS (3) times.
+const LOOP_HOPS_PER_ATTEMPT = 6;
+const RETRY_ATTEMPTS = 3;
+
+const BRIDGE_ACCOUNTS = {
+  accounts: [
+    {
+      id: 'account-1',
+      balance: '12.34',
+      'balance-date': 1767139200,
+      currency: 'USD',
+      transactions: [],
+      org: { name: 'Example Bank', domain: 'example.com' },
+    },
+  ],
+  errors: [],
+};
+
+// Everything the module wrote to the log, flattened into one string. Errors are
+// rendered with their stack, so a logged stack trace is visible here.
+const logged = () =>
+  console.log.mock.calls
+    .flat()
+    .map(value =>
+      value instanceof Error
+        ? `${value.name}: ${value.stack ?? value.message}`
+        : String(value),
+    )
+    .join('\n');
+
 // The claim is a POST to the bridge; listing accounts is a GET. Route the mock
 // by method so a test can stub one or both.
 function mockFetch({ claim, accounts }) {
@@ -247,6 +288,65 @@ describe('app-simplefin', () => {
       expect(global.fetch).not.toHaveBeenCalled();
       expect(secretsService.get(SecretName.simplefin_accessKey)).toBeNull();
     });
+
+    it('reports TOO_MANY_REDIRECTS naming the looping bridge once the retries run out', async () => {
+      secretsService.set(SecretName.simplefin_accessKey, VALID_ACCESS_KEY);
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          redirectResponse('https://bridge.example.com/simplefin/accounts'),
+        );
+
+      const res = await post('/accounts');
+
+      expect(global.fetch).toHaveBeenCalledTimes(
+        LOOP_HOPS_PER_ATTEMPT * RETRY_ATTEMPTS,
+      );
+      expect(res.body.data.error_code).toBe('TOO_MANY_REDIRECTS');
+      expect(res.body.data.error_type).toBe('TOO_MANY_REDIRECTS');
+      expect(res.body.data.reason).toContain('bridge.example.com');
+
+      // The loop is an expected upstream failure: one line naming the host, no
+      // stack trace pointing back at our own redirect follower.
+      const output = logged();
+      expect(output).toContain(
+        'SimpleFIN bridge at bridge.example.com redirected 5 times',
+      );
+      expect(output).toContain('Giving up on SimpleFIN after 3 attempts');
+      expect(output).not.toContain('    at ');
+    });
+
+    it('drops bridge credentials on a cross-origin redirect and rebuilds them for each retry', async () => {
+      secretsService.set(SecretName.simplefin_accessKey, VALID_ACCESS_KEY);
+      const seen = [];
+      global.fetch = vi.fn().mockImplementation((url, options) => {
+        seen.push({ url, authorization: options?.headers?.Authorization });
+        // The bridge bounces to another origin, which then loops forever.
+        return Promise.resolve(
+          new URL(url).hostname === 'other.example.com'
+            ? redirectResponse('/simplefin/accounts')
+            : redirectResponse('https://other.example.com/simplefin/accounts'),
+        );
+      });
+
+      const res = await post('/accounts');
+
+      const basic = `Basic ${Buffer.from('user:pass').toString('base64')}`;
+      expect(res.body.data.error_code).toBe('TOO_MANY_REDIRECTS');
+      // The credential reaches the bridge it belongs to and no further.
+      expect(seen[0].authorization).toBe(basic);
+      const loopedHops = seen.filter(s =>
+        s.url.startsWith('https://other.example.com'),
+      );
+      expect(loopedHops.length).toBeGreaterThan(0);
+      expect(loopedHops.every(s => s.authorization === undefined)).toBe(true);
+      // Retrying must not reuse the header state of the attempt that gave up.
+      const firstHops = seen.filter(s =>
+        s.url.startsWith('https://bridge.example.com'),
+      );
+      expect(firstHops).toHaveLength(RETRY_ATTEMPTS);
+      expect(firstHops.every(s => s.authorization === basic)).toBe(true);
+    });
   });
 
   describe('/transactions', () => {
@@ -264,6 +364,52 @@ describe('app-simplefin', () => {
 
       expect(res.body.data.error_code).toBe('INVALID_ACCESS_TOKEN');
       expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('retries a redirect loop and finishes the sync when the bridge recovers', async () => {
+      secretsService.set(SecretName.simplefin_accessKey, VALID_ACCESS_KEY);
+      let hops = 0;
+      global.fetch = vi.fn().mockImplementation(() => {
+        hops += 1;
+        if (hops <= LOOP_HOPS_PER_ATTEMPT) {
+          return Promise.resolve(
+            redirectResponse('https://bridge.example.com/simplefin/accounts'),
+          );
+        }
+        return Promise.resolve(okResponse(JSON.stringify(BRIDGE_ACCOUNTS)));
+      });
+
+      const res = await post('/transactions').send({
+        accountId: 'account-1',
+        startDate: '2026-07-01',
+      });
+
+      expect(global.fetch).toHaveBeenCalledTimes(LOOP_HOPS_PER_ATTEMPT + 1);
+      expect(res.body.data.error_code).toBeUndefined();
+      expect(res.body.data.startingBalance).toBe(1234);
+      expect(logged()).toContain('Retrying SimpleFIN request in');
+    });
+
+    it('reports TOO_MANY_REDIRECTS for a looping bridge instead of failing the sync outright', async () => {
+      secretsService.set(SecretName.simplefin_accessKey, VALID_ACCESS_KEY);
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          redirectResponse('https://bridge.example.com/simplefin/accounts'),
+        );
+
+      const res = await post('/transactions').send({
+        accountId: 'account-1',
+        startDate: '2026-07-01',
+      });
+
+      expect(global.fetch).toHaveBeenCalledTimes(
+        LOOP_HOPS_PER_ATTEMPT * RETRY_ATTEMPTS,
+      );
+      expect(res.body.data.error_code).toBe('TOO_MANY_REDIRECTS');
+      expect(res.body.data.reason).toContain('bridge.example.com');
+      // The reason travels to the app, which shows it when linking accounts.
+      expect(res.body.data.reason).toContain('usually temporary');
     });
   });
 });
