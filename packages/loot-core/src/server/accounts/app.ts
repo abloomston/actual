@@ -1366,6 +1366,13 @@ function handleSyncError(
       };
     }
 
+    if (err.category === 'TOO_MANY_REDIRECTS') {
+      return {
+        ...syncError,
+        message: `Failed syncing account ${acct.name}. The SimpleFIN bridge kept redirecting without answering, which is usually temporary. Please try again in a few minutes.`,
+      };
+    }
+
     return syncError;
   }
 

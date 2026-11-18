@@ -140,6 +140,34 @@ describe('simpleFinBatchSync', () => {
       const acct2Result = result.find(r => r.accountId === 'acct2');
       expect(acct2Result!.res.errors).toHaveLength(0);
     });
+
+    it('turns a bridge redirect loop into a retryable, user-facing error', async () => {
+      await setupSimpleFinAccounts([
+        { id: 'acct1', name: 'Checking', accountId: 'ext-1' },
+      ]);
+
+      vi.mocked(bankSync.simpleFinBatchSync).mockResolvedValue([
+        {
+          accountId: 'acct1',
+          res: {
+            error_code: 'TOO_MANY_REDIRECTS',
+            error_type: 'TOO_MANY_REDIRECTS',
+          },
+        },
+      ]);
+
+      const result = await simpleFinBatchSyncHandler({ ids: [] });
+
+      expect(result[0].res.errors[0]).toEqual(
+        expect.objectContaining({
+          type: 'SyncError',
+          category: 'TOO_MANY_REDIRECTS',
+          code: 'TOO_MANY_REDIRECTS',
+          message:
+            'Failed syncing account Checking. The SimpleFIN bridge kept redirecting without answering, which is usually temporary. Please try again in a few minutes.',
+        }),
+      );
+    });
   });
 });
 
